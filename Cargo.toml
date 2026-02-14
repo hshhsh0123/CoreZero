@@ -1,0 +1,29 @@
+[package]
+name = "corezero"
+version = "1.0.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Open-source zero-underrun RT audio engine. Proven underruns: 0."
+repository = "https://github.com/yourusername/corezero"
+license = "MIT"
+readme = "README.md"
+keywords = ["audio", "real-time", "music", "playback", "underrun"]
+categories = ["multimedia", "command-line-utilities"]
+
+[dependencies]
+symphonia = { version = "0.5", features = ["all"] }
+cpal = "0.15"
+windows = { version = "0.58.0", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[[bin]]
+name = "corezero"
+path = "src/main.rs"
