@@ -108,6 +108,8 @@ def collect(runtime_dir=None, live_mode=False):
             "heartbeat_min": LIVE["heartbeat_min"],
             "max_reviews": LIVE["max_reviews_per_day"],
             "max_triages": LIVE["max_triages_per_day"],
+            "news_confirm_min": LIVE["news_confirm_min"],
+            "news_min_stop_gap": LIVE["news_min_stop_gap"],
         },
     }
 
@@ -263,6 +265,7 @@ def _market_view(key, cfg, st, rdir):
         "players": players,
         "alerts": [{**a, "name": st.get("names", {}).get(a.get("code"), a.get("code"))} for a in alerts if isinstance(a, dict)],
         "next_check_at": (snap or {}).get("next_check_at"),
+        "followups": (snap.get("followups") or []) if snap and snap.get("phase") == "open" else [],
         "journal": list(reversed(st.get("journal", [])))[:30],
         "rt": rt,
     }

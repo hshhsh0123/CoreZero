@@ -56,14 +56,15 @@ class FakeBrain:
         self.verdict, self.boom = verdict, boom
         self.reply = {"actions": actions or [], **(reply or {})}
         self.respond = respond
-        self.triage_calls, self.react_calls = [], []
+        self.triage_calls, self.react_calls, self.modes = [], [], []
 
     def triage(self, ctx, events):
         self.triage_calls.append(events)
         return {"verdict": self.verdict, "importance": 4, "reason": "테스트", "meta": {}}
 
-    def react(self, ctx, events, triage=None):
+    def react(self, ctx, events, triage=None, mode="trade"):
         self.react_calls.append((ctx, events))
+        self.modes.append(mode)
         if self.boom:
             raise RuntimeError("deepseek down")
         out = {"assessment": "판단", "actions": [], "alerts": None, "alert_notes": [], "next_check_min": None,
@@ -594,6 +595,215 @@ class SessionFlowTest(EngineCase):
         self.assertTrue((live.RUNTIME / "feed_kr.jsonl").exists())
 
 
+class NewsSafetyTest(EngineCase):
+    """기사 하나만 보고는 사고팔지 않는다. 주가 반응을 확인한 뒤에야 매매한다."""
+
+    def news(self, code, title, minutes_ago=1, source="한경", key=None):
+        return {"code": code, "key": key or f"{code}:{title}", "when": self.market.now - timedelta(minutes=minutes_ago),
+                "title": title, "source": source}
+
+    def test_headline_alone_cannot_trade_then_price_reaction_decides(self):
+        self.seed({"S1": (100_000, 100.0)})
+
+        def respond(ctx, events):
+            kinds = {e["kind"] for e in events}
+            if kinds == {"news"}:            # 기사만 보고 전량 매도 + 손절을 바짝 붙이려 한다
+                return {"actions": [act("S1", 0.0, stop_price=99.5, reason="매각설이 악재")]}
+            if "news_followup" in kinds:     # 15분 뒤 주가도 빠졌으면 그때 판다
+                return {"actions": [act("S1", 0.0, reason="주가도 같이 빠져서 정리")]}
+            return {}
+
+        brain_ = FakeBrain(respond=respond)
+        eng = self.engine(brain_)
+        self.news_items = [self.news("S1", "A사, 경영권 매각설")]
+        self.run_ticks(eng, 2)                       # 뉴스 점검, 다음 확인 때 답을 반영
+        ai = eng.st["players"]["ai"]
+        self.assertEqual(brain_.modes, ["news"])
+        self.assertEqual(ai["positions"]["S1"]["shares"], 100_000)   # 기사만으로는 안 판다
+        self.assertEqual(ai["trades"], [])
+        self.assertAlmostEqual(eng.st["plans"]["S1"]["stop"], 98.0)   # 99.5는 너무 붙어서 2% 아래로
+        rec = eng.st["reactions"][-1]
+        self.assertEqual((rec["mode"], rec["blocked"], [r["code"] for r in rec["recheck"]]), ("news", ["종목S1"], ["S1"]))
+        self.assertTrue(any("기사만 보고는" in n for n in rec["notes"]))
+        self.assertTrue(any("너무 붙어서" in n for n in rec["notes"]))
+        self.assertIn("AI 뉴스 점검", [e for e in eng.feed if e["kind"] == "react"][-1]["text"])
+        snap = json.loads((live.RUNTIME / "live_kr.json").read_text(encoding="utf-8"))
+        self.assertEqual([f["code"] for f in snap["followups"]], ["S1"])
+
+        self.market.prices["S1"] = 99.0              # 조금 밀린다 (급변도 손절도 아님)
+        self.run_ticks(eng, 13)
+        self.assertEqual(len(brain_.react_calls), 1)  # 15분이 되기 전에는 다시 안 부른다
+        self.run_ticks(eng, 3)
+        self.assertEqual(brain_.modes, ["news", "trade"])
+        ev = brain_.react_calls[1][1][0]
+        self.assertEqual((ev["kind"], ev["code"]), ("news_followup", "S1"))
+        self.assertIn("기사 뒤로 주가 -1.0%", ev["text"])
+        self.assertIn("같은 동안 시장 +0.0%", ev["text"])
+        self.assertIn("매각설", ev["text"])
+        self.assertNotIn("S1", ai["positions"])       # 주가 반응을 본 점검에서는 판다
+        self.assertEqual(ai["trades"][-1]["tag"], "react")
+        self.assertEqual(eng.followups, {})
+
+    def test_ai_can_ask_to_recheck_without_trading(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain(reply={"recheck": ["S1"], "next_check_min": 60})
+        eng = self.engine(brain_)
+        self.news_items = [self.news("S1", "A사 신사업 진출 검토")]
+        self.run_ticks(eng, 2)
+        self.assertEqual(list(eng.followups), ["S1"])
+        self.assertEqual(eng.st["reactions"][-1]["blocked"], [])
+        self.run_ticks(eng, 16)
+        self.assertEqual(brain_.modes, ["news", "trade"])
+        self.assertEqual(brain_.react_calls[1][1][0]["kind"], "news_followup")
+
+    def test_price_move_brings_the_pending_news_check_forward(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain(reply={"recheck": ["S1"]})
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 16)
+        self.news_items = [self.news("S1", "A사 매각설")]
+        eng.last_news_at = None
+        self.run_ticks(eng, 7)
+        self.assertEqual((brain_.modes, list(eng.followups)), (["news"], ["S1"]))
+        self.market.prices["S1"] = 96.0              # 확인 시간 전에 주가가 먼저 크게 움직였다
+        self.run_ticks(eng, 1)
+        self.assertEqual(brain_.modes, ["news", "trade"])
+        kinds = self.kinds(brain_.react_calls[1])
+        self.assertIn("fast_move", kinds)
+        self.assertIn("news_followup", kinds)        # 그 뉴스를 같이 보여준다
+        self.assertEqual(eng.followups, {})
+        self.run_ticks(eng, 15)
+        self.assertEqual(brain_.modes, ["news", "trade"])   # 15분이 돼도 또 부르지 않는다
+
+    def test_price_event_brings_its_own_news_into_a_trade_review(self):
+        self.seed({"S1": (100_000, 100.0), "S4": (50_000, 100.0)})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 20)
+        self.assertEqual(brain_.react_calls, [])
+        self.market.prices["S1"] = 96.0              # 주가가 먼저 움직였다
+        self.news_items = [self.news("S1", "A사 실적 쇼크"), self.news("S4", "B사 합병설")]
+        eng.last_news_at = None
+        self.run_ticks(eng, 1)
+        self.assertEqual(brain_.modes, ["trade"])
+        batch = brain_.react_calls[0][1]
+        self.assertEqual({e["code"] for e in batch}, {"S1"})
+        self.assertIn("news", self.kinds(brain_.react_calls[0]))   # 주가가 확인해준 기사는 같이 본다
+        self.assertEqual([(e["kind"], e["code"]) for e in eng.events], [("news", "S4")])
+        self.run_ticks(eng, 1)                       # 남은 기사는 따로 뉴스 점검
+        self.assertEqual(brain_.modes, ["trade", "news"])
+        self.assertEqual([e["code"] for e in brain_.react_calls[1][1]], ["S4"])
+
+    def test_market_news_is_rechecked_on_the_index(self):
+        self.seed({"S1": (100_000, 100.0)})
+
+        def respond(ctx, events):
+            if {e["kind"] for e in events} == {"news"}:
+                return {"actions": [act("S1", 0.0, reason="시장이 무너질 것 같아")]}
+            return {}
+
+        brain_ = FakeBrain(respond=respond)
+        eng = self.engine(brain_)
+        self.news_items = [self.news("MAIN", "美 연준, 긴급 금리 인상 가능성")]
+        self.run_ticks(eng, 2)
+        self.assertIn("S1", eng.st["players"]["ai"]["positions"])
+        self.assertEqual(list(eng.followups), ["069500"])
+        self.assertEqual(eng.followups["069500"]["name"], "KODEX 200")
+        news_ev = brain_.react_calls[0][1][0]
+        self.assertTrue(news_ev["data"]["rumor"])
+        self.assertNotIn("articles_1h", news_ev["data"])   # 시장 피드는 기사마다 다른 이야기라 안 센다
+        self.market.bench_price = 99.7
+        self.run_ticks(eng, 16)
+        ev = brain_.react_calls[1][1][0]
+        self.assertEqual((ev["kind"], ev["code"]), ("news_followup", "069500"))
+        self.assertIn("KODEX 200 뉴스 확인", ev["text"])
+        self.assertIn("-0.3%", ev["text"])
+        self.assertNotIn("같은 동안 시장", ev["text"])
+        self.assertIn("S1", eng.st["players"]["ai"]["positions"])   # 지수가 안 무너졌으니 그대로
+
+    def test_news_hints_count_sources_and_price_since_the_article(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain(verdict="ignore")
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 6)
+        self.market.prices["S1"] = 99.0
+        self.news_items = [
+            self.news("S1", "A사, 단독 공급 계약 체결", minutes_ago=3, source="한경", key="k1"),
+            self.news("S1", "A사 공급 계약 기대", minutes_ago=30, source="연합", key="k2"),
+            self.news("S1", "A사 옛날 이야기", minutes_ago=70, source="매경", key="k3"),
+        ]
+        eng.last_news_at = None
+        self.run_ticks(eng, 1)
+        ev = brain_.triage_calls[0][0]
+        d = ev["data"]
+        self.assertEqual((d["articles_1h"], d["sources_1h"], d["rumor"]), (2, 2, True))
+        self.assertEqual([n["title"] for n in d["earlier"]], ["A사 공급 계약 기대"])
+        self.assertAlmostEqual(d["moved"], -0.01)
+        self.assertEqual(d["price"], 100.0)
+        text = brain.events_text([ev])
+        self.assertIn("기사 2건, 매체 2곳", text)
+        self.assertIn("추측·단독성", text)
+        self.assertIn("기사 뒤로 주가 -1.0%", text)
+        self.assertIn("앞서 [", text)
+        self.assertIn("[코드 S1]", text)
+
+
+    def test_spent_budget_skips_news_too_and_says_so_once(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 1)
+        eng.counts["reviews"] = LIVE["max_reviews_per_day"]
+        for i in range(3):
+            self.news_items.append(self.news("S1", f"기사 {i}"))
+            eng.last_news_at = None
+            self.run_ticks(eng, 2)
+        self.assertEqual((brain_.triage_calls, brain_.react_calls), ([], []))
+        self.assertEqual(len([e for e in eng.feed if "다 써서" in e["text"]]), 1)
+
+
+class NewsPromptTest(EngineCase):
+    def ctx(self):
+        self.seed({"S1": (100_000, 100.0)}, alerts=[{"code": "S1", "below": 99.0, "above": None, "note": ""}])
+        eng = self.engine()
+        self.run_ticks(eng, 1)
+        now = self.market.now
+        return eng._build_ctx(eng.last_q, now, now.astimezone(eng.tz))
+
+    def ask(self, mode, answer):
+        prompts = []
+
+        def fake_chat(model, system, user, max_tokens=16000):
+            prompts.append(user)
+            return answer, {"model": "fake"}
+
+        with mock.patch.object(brain, "chat_json", fake_chat):
+            events = [{"kind": "news", "code": "S1", "text": "종목S1: 매각설", "data": {}, "local": "10:00"}]
+            out = brain.react(self.ctx(), events, mode=mode)
+        return prompts[0], out
+
+    def test_news_mode_prompt_and_parsing(self):
+        answer = {"assessment": "a", "actions": [{"code": "S1", "target_weight": 0, "stop_price": 97}],
+                  "recheck": ["S1", "ZZ", "069500", "S1"],
+                  "alerts": [{"code": "S1", "below": 99.5}, {"code": "S1", "below": 95}, {"code": "S1", "below": 99.0}]}
+        prompt, out = self.ask("news", answer)
+        self.assertIn("뉴스 점검", prompt)
+        self.assertIn('"recheck"', prompt)
+        self.assertNotIn('"target_weight"', prompt)
+        self.assertEqual(out["recheck"], ["S1", "069500"])
+        self.assertEqual([a["below"] for a in out["alerts"]], [95.0, 99.0])   # 99는 원래 걸려 있던 알림이라 둔다
+        self.assertTrue(any("너무 붙어서" in n for n in out["alert_notes"]))
+
+    def test_trade_mode_prompt(self):
+        prompt, out = self.ask("trade", {"assessment": "a", "actions": [], "recheck": ["S1"],
+                                         "alerts": [{"code": "S1", "below": 99.5}]})
+        self.assertNotIn("뉴스 점검", prompt)
+        self.assertIn('"target_weight"', prompt)
+        self.assertIn("소문일 수 있어", prompt)
+        self.assertNotIn("recheck", out)
+        self.assertEqual([a["below"] for a in out["alerts"]], [99.5])          # 매매 점검에서는 간격 제한 없음
+
+
 class PlanUnitTest(unittest.TestCase):
     def test_parse_update(self):
         self.assertEqual(planlib.parse_update({"stop_pct": 7, "take_pct": "0.2"}), {"stop_pct": 0.07, "take_pct": 0.2})
@@ -612,6 +822,26 @@ class PlanUnitTest(unittest.TestCase):
         self.assertNotIn("trail_pct", plan)
         _, notes = planlib.apply(plan, {"stop_price": 111, "take_price": 105}, avg=100, price=110)
         self.assertEqual(len(notes), 2)
+
+    def test_min_gap_keeps_plans_off_the_price(self):
+        plan, notes = planlib.apply({}, {"stop_price": 99.5}, avg=100, price=100, min_gap=0.02)
+        self.assertEqual((plan["stop"], len(notes)), (98.0, 1))
+        plan, notes = planlib.apply({"stop": 98.5}, {"stop_price": 99.5}, avg=100, price=100, min_gap=0.02)
+        self.assertEqual(plan["stop"], 98.5)                               # 이미 더 바짝 있던 손절은 안 내린다
+        plan, notes = planlib.apply({"stop": 99.0}, {"stop_price": 98.8}, avg=100, price=99.5, min_gap=0.02)
+        self.assertEqual((plan["stop"], notes), (98.8, []))                # 멀어지는 쪽은 언제나 된다
+        plan, _ = planlib.apply({}, {"take_price": 101.0}, avg=100, price=100, min_gap=0.02)
+        self.assertEqual(plan["take"], 102.0)
+        plan, _ = planlib.apply({"take": 101.5}, {"take_price": 101.0}, avg=100, price=100, min_gap=0.02)
+        self.assertEqual(plan["take"], 101.5)
+        plan, notes = planlib.apply({}, {"trail_pct": 0.02}, avg=100, price=100, min_gap=0.02)
+        self.assertEqual((plan["trail_pct"], notes), (0.02, []))           # 최고가 100에서 2% = 98, 딱 경계
+        plan, notes = planlib.apply({"trail_pct": 0.1, "high": 110.0}, {"trail_pct": 0.05}, avg=100, price=100)
+        self.assertEqual((plan["trail_pct"], len(notes)), (0.1, 1))        # 104.5면 바로 팔리니까 안 바꾼다
+        plan, notes = planlib.apply({"trail_pct": 0.05, "high": 110.0}, {"trail_pct": 0.1}, avg=100, price=100)
+        self.assertEqual((plan["trail_pct"], notes), (0.1, []))            # 넓히는 건 된다
+        plan, notes = planlib.apply({"trail_pct": 0.02, "high": 110.0}, {"trail_pct": 0.05}, avg=100, price=100)
+        self.assertEqual((plan["trail_pct"], notes), (0.05, []))           # 아직 가격 위여도 넓히는 쪽이면 받는다
 
     def test_check_picks_the_higher_stop(self):
         plan = {"stop": 90.0, "trail_pct": 0.05, "high": 120.0}
@@ -654,12 +884,29 @@ class BrainParsingTest(unittest.TestCase):
         self.assertEqual(brain.clean_alerts(None, {"A"}, {}), ([], []))
 
 
+    def test_clean_recheck(self):
+        self.assertEqual(brain.clean_recheck(["A", "A", "Z", {"code": "B"}, 3], {"A", "B"}), ["A", "B"])
+        self.assertEqual(brain.clean_recheck("A", {"A"}), ["A"])
+        self.assertEqual(brain.clean_recheck(None, {"A"}), [])
+
+    def test_market_feed_codes_are_not_shown_as_tradable(self):
+        text = brain.events_text([{"kind": "news", "code": "MAIN", "text": "시장 주요뉴스: 금리", "data": {"rumor": True}}])
+        self.assertNotIn("[코드", text)
+        self.assertIn("추측·단독성", text)
+
+
 class TriggerUnitTest(unittest.TestCase):
     def test_thresholds(self):
         thr = triggers.fast_threshold(0.03, 15, 390, 3.0, 0.012)
         self.assertAlmostEqual(thr, 3 * 0.03 * (15 / 390) ** 0.5)
         self.assertEqual(triggers.fast_threshold(0.005, 15, 390, 3.0, 0.012), 0.012)
         self.assertEqual((triggers.day_level(0.061, 0.03), triggers.day_level(-0.09, 0.04), triggers.day_level(0.01, 0.03)), (2, -2, 0))
+
+    def test_rumor_words(self):
+        for t in ("A사, B사 인수설 솔솔", "[단독] A사 매각 추진", "A사 유상증자 검토", "A사 상장폐지 가능성?", "업계 관측"):
+            self.assertTrue(triggers.looks_like_rumor(t), t)
+        for t in ("A사 3분기 영업이익 10조 발표", "A사, B사와 공급 계약 체결", "A사 인수 완료", None):
+            self.assertFalse(triggers.looks_like_rumor(t), t)
 
     def test_history_return_needs_enough_data(self):
         h = quotes.History()

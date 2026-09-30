@@ -67,8 +67,12 @@ def migrate(plan, avg):
     return {k: v for k, v in plan.items() if v is not None}
 
 
-def apply(plan, update, avg, price=None):
-    """update를 반영한 새 계획과, 받아들이지 않은 항목에 대한 메모 목록을 돌려준다."""
+def apply(plan, update, avg, price=None, min_gap=0.0):
+    """update를 반영한 새 계획과, 받아들이지 않은 항목에 대한 메모 목록을 돌려준다.
+
+    min_gap을 주면 손절·트레일링은 지금 가격보다 그만큼 아래까지만, 목표가는 그만큼 위까지만 붙일 수 있다.
+    계획을 가격에 바짝 붙여서 사실상 바로 사고파는 걸 막는다. 멀어지는 쪽으로 바꾸는 건 언제나 된다.
+    """
     plan = dict(plan or {})
     notes = []
     stop = None
@@ -77,9 +81,20 @@ def apply(plan, update, avg, price=None):
     elif "stop_pct" in update:
         stop = avg * (1 - update["stop_pct"]) if update["stop_pct"] else 0.0
     if stop is not None:
+        old = plan.get("stop") or 0.0
+        cap = price * (1 - min_gap) if price else None
         if stop == 0:
             plan.pop("stop", None)
             plan.pop("default", None)
+        elif min_gap and cap and stop > cap and stop > old:
+            if old >= cap:
+                notes.append(f"손절가 {stop:,.2f}는 지금 가격({price:,.2f})에 너무 붙어서 원래 손절 {old:,.2f}를 그대로 뒀어요 "
+                             f"(지금 가격보다 {min_gap:.0%} 넘게 아래여야 해요)")
+            else:
+                plan["stop"] = cap
+                plan.pop("default", None)
+                notes.append(f"손절가 {stop:,.2f}는 지금 가격({price:,.2f})에 너무 붙어서 {cap:,.2f}로 걸었어요 "
+                             f"(지금 가격보다 {min_gap:.0%} 넘게 아래여야 해요)")
         elif price and stop >= price:
             notes.append(f"손절가 {stop:,.2f}가 지금 가격({price:,.2f}) 이상이라 안 바꿨어요. 바로 팔려면 비중을 0으로 하면 돼요")
         else:
@@ -91,9 +106,19 @@ def apply(plan, update, avg, price=None):
     elif "take_pct" in update:
         take = avg * (1 + update["take_pct"]) if update["take_pct"] else 0.0
     if take is not None:
+        old = plan.get("take")
+        floor = price * (1 + min_gap) if price else None
         if take == 0:
             plan.pop("take", None)
             plan.pop("take_frac", None)
+        elif min_gap and floor and take < floor and (old is None or take < old):
+            if old is not None and old <= floor:
+                notes.append(f"목표가 {take:,.2f}는 지금 가격({price:,.2f})에 너무 붙어서 원래 목표 {old:,.2f}를 그대로 뒀어요 "
+                             f"(지금 가격보다 {min_gap:.0%} 넘게 위여야 해요)")
+            else:
+                plan["take"] = floor
+                notes.append(f"목표가 {take:,.2f}는 지금 가격({price:,.2f})에 너무 붙어서 {floor:,.2f}로 걸었어요 "
+                             f"(지금 가격보다 {min_gap:.0%} 넘게 위여야 해요)")
         elif price and take <= price:
             notes.append(f"목표가 {take:,.2f}가 지금 가격({price:,.2f}) 이하라 안 바꿨어요")
         else:
@@ -102,8 +127,14 @@ def apply(plan, update, avg, price=None):
         plan["take_frac"] = update["take_frac"]
     if "trail_pct" in update:
         if update["trail_pct"]:
-            plan["trail_pct"] = update["trail_pct"]
-            plan["high"] = max(plan.get("high") or 0.0, price or avg)
+            new = dict(plan, trail_pct=update["trail_pct"], high=max(plan.get("high") or 0.0, price or avg))
+            level, old = trail_stop(new), trail_stop(plan) or 0.0
+            too_close = price and level > old and (level > price * (1 - min_gap) if min_gap else level >= price)
+            if too_close:
+                notes.append(f"트레일링 {update['trail_pct']:.0%}면 매도 기준이 {level:,.2f}로 지금 가격({price:,.2f})에 "
+                             "너무 붙어서 안 바꿨어요. 바로 팔려면 비중을 0으로 하면 돼요")
+            else:
+                plan = new
         else:
             plan.pop("trail_pct", None)
             plan.pop("high", None)

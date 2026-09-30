@@ -9,6 +9,8 @@ from . import net
 from . import plans as planlib
 from .config import (
     DEFAULT_STOP_PCT,
+    LIVE,
+    MARKET_NEWS,
     MAX_ALERTS,
     MAX_POSITIONS,
     MAX_WEIGHT,
@@ -141,6 +143,8 @@ def decide(ctx, details):
         f"  · 손절도 트레일링도 안 정하면 {DEFAULT_STOP_PCT:.0%} 손절이 기본으로 걸려. 이미 들고 있는 종목은 안 적은 항목이 그대로 유지돼.",
         "- 장중에는 시세와 뉴스를 계속 지켜보다가 큰 일이 생기거나 네가 걸어둔 알림이 울리면 너를 다시 불러. "
         "그때마다 비중도 계획도 새로 고칠 수 있어.",
+        "- 뉴스 제목은 틀리거나 소문일 수 있어. '~설', '단독', '검토', '가능성' 같은 말은 확정된 게 아니야. "
+        "기사 하나만 보고 크게 걸지 말고, 여러 매체가 같은 얘기를 했는지, 주가 흐름도 같은 쪽인지 같이 봐.",
         "",
         '형식: {"market_view": "시장 전체에 대한 한두 문장", '
         '"targets": [{"code": "종목코드", "weight": 0.2, "reason": "왜 이 종목을 이 비중으로 드는지 한두 문장", '
@@ -317,10 +321,14 @@ def clean_actions(raw, allowed):
     return out
 
 
-def clean_alerts(raw, allowed, prices):
-    """AI가 걸겠다는 가격 알림. 바로 울릴 알림은 빼고 메모를 남긴다. (알림 목록, 메모 목록)"""
+def clean_alerts(raw, allowed, prices, min_gap=0.0, existing=()):
+    """AI가 걸겠다는 가격 알림. 바로 울릴 알림은 빼고 메모를 남긴다. (알림 목록, 메모 목록)
+
+    min_gap을 주면 지금 가격에서 그만큼도 안 떨어진 알림은 뺀다. 원래 걸려 있던 알림(existing)은 그대로 둘 수 있다.
+    """
     if not isinstance(raw, list):
         return [], []
+    kept = {(a.get("code"), side, a.get(side)) for a in existing for side in ("above", "below") if a.get(side)}
     out, notes = [], []
     for a in raw:
         if not isinstance(a, dict):
@@ -339,6 +347,15 @@ def clean_alerts(raw, allowed, prices):
         if price and below and below >= price:
             notes.append(f"{code}: 아래쪽 알림 {below:,.2f}가 이미 지금 가격 이상이라 뺐어요")
             below = None
+        if price and min_gap:
+            if above and above < price * (1 + min_gap) and (code, "above", above) not in kept:
+                notes.append(f"{code}: 위쪽 알림 {above:,.2f}는 지금 가격({price:,.2f})에 너무 붙어서 뺐어요 "
+                             f"(지금 가격에서 {min_gap:.0%} 넘게 떨어져 있어야 해요)")
+                above = None
+            if below and below > price * (1 - min_gap) and (code, "below", below) not in kept:
+                notes.append(f"{code}: 아래쪽 알림 {below:,.2f}는 지금 가격({price:,.2f})에 너무 붙어서 뺐어요 "
+                             f"(지금 가격에서 {min_gap:.0%} 넘게 떨어져 있어야 해요)")
+                below = None
         if not above and not below:
             continue
         out.append({"code": code, "above": above, "below": below, "note": str(a.get("note", ""))[:200]})
@@ -355,13 +372,37 @@ def system_prompt_live(ctx):
     )
 
 
+FEEDS = {c for codes in MARKET_NEWS.values() for c in codes}
+
+
+def _news_hint(d):
+    """기사를 얼마나 믿을지 판단할 힌트 한 줄. 판정은 AI 몫이다."""
+    bits = []
+    if d.get("articles_1h"):
+        bits.append(f"최근 1시간 이 종목 기사 {d['articles_1h']}건, 매체 {d.get('sources_1h') or 0}곳")
+    if d.get("rumor"):
+        bits.append("제목에 추측·단독성 표현 있음")
+    if d.get("moved") is not None:
+        bits.append(f"{d['since']} 기사 뒤로 주가 {d['moved']:+.1%}")
+    return f"    ({' · '.join(bits)})" if bits else None
+
+
 def events_text(events):
     lines = []
     for e in events:
         stamp = e.get("at", "")[11:16] if e.get("at") else ""
-        lines.append(f"- [{e.get('local', stamp)}] {e['text']}")
-        for n in (e.get("data") or {}).get("items", [])[:4]:
+        code = e.get("code")
+        tag = f" [코드 {code}]" if code and code not in FEEDS else ""
+        lines.append(f"- [{e.get('local', stamp)}] {e['text']}{tag}")
+        d = e.get("data") or {}
+        for n in d.get("items", [])[:4]:
             lines.append(f"    · [{n['time']} {n['source']}] {n['title']}")
+        if e.get("kind") == "news":
+            hint = _news_hint(d)
+            if hint:
+                lines.append(hint)
+            for n in d.get("earlier", [])[:3]:
+                lines.append(f"    · 앞서 [{n['time']} {n['source']}] {n['title']}")
     return "\n".join(lines) if lines else "- 없음"
 
 
@@ -383,6 +424,9 @@ def triage(ctx, events):
         "",
         "이 소식 때문에 지금 포트폴리오를 바꿔야 할지 판단해. 이미 주가에 반영됐거나 나랑 상관없는 소식이면 ignore야. "
         "보유 종목에 직접 영향이 있거나, 새로 살 만한 큰 기회일 때만 review.",
+        "기사는 틀리거나 소문일 수 있어. 한 매체만 쓴 기사나 '~설', '단독', '검토', '가능성' 같은 말이 있는 기사는 "
+        "확인 안 된 이야기니까, 보유 종목에 크게 영향을 줄 게 아니면 ignore해. "
+        "review가 돼도 기사만으로는 사고팔지 않고, 손절·알림을 준비하거나 주가 반응을 보고 다시 판단하게 돼.",
         '형식: {"verdict": "review" 또는 "ignore", "importance": 1부터 5까지 정수, "reason": "한 줄"}',
     ]
     result, meta = chat_json(MODEL_TRIAGE, system_prompt_live(ctx), "\n".join(lines), max_tokens=4000)
@@ -408,11 +452,18 @@ def _alert_line(a, market):
     return f"- {a.get('name') or a['code']}({a['code']}): {' 또는 '.join(parts)}{note}"
 
 
-def react(ctx, events, triage=None):
-    """장중에 사건을 보고 비중과 계획을 어떻게 바꿀지 정한다."""
+def react(ctx, events, triage=None, mode="trade"):
+    """장중에 사건을 보고 비중과 계획을 어떻게 바꿀지 정한다.
+
+    mode가 "news"면 기사만 들어온 점검이다. 사고팔 수는 없고 계획(손절·목표·트레일링)과 알림만 고치며,
+    recheck에 적은 종목은 잠시 뒤 주가 반응을 보여주고 다시 물어본다.
+    """
     market = ctx["market"]
     cur = ctx["currency"]
     lo, hi = NEXT_CHECK_RANGE
+    news = mode == "news"
+    gap = LIVE["news_min_stop_gap"]
+    wait = LIVE["news_confirm_min"]
     lines = [
         f"현재 시각 {ctx['now_local']} ({ctx['market_name']} 장중, 마감까지 {ctx['minutes_left']}분)",
         "",
@@ -421,6 +472,19 @@ def react(ctx, events, triage=None):
     ]
     if triage:
         lines.append(f"(빠른 심사에서 검토가 필요하다고 함: {triage.get('reason', '')})")
+    if news:
+        lines += [
+            "",
+            "[이번 점검은 '뉴스 점검'이야]",
+            "- 기사 제목만 들어왔고 주가로 확인된 건 아직 없어. 그래서 이번에는 사고팔 수 없어. target_weight를 적어도 무시돼.",
+            "- 기사는 틀릴 수도 있고 소문일 수도 있어. 여러 매체가 같은 얘기를 했는지, 회사 발표나 공시인지, "
+            "'~설'·'단독'·'검토'·'가능성' 같은 추측 표현이 있는지 봐.",
+            f"- 대신 준비는 할 수 있어. 손절을 조이거나(지금 가격보다 {gap:.0%} 넘게 아래까지만), 목표가·트레일링을 고치거나, "
+            f"지금 가격에서 {gap:.0%} 넘게 떨어진 가격에 알림을 걸어서 주가가 진짜 움직이면 다시 부르게 해.",
+            f"- recheck에 종목코드를 적으면 {wait}분 뒤에 그동안 주가가 시장 대비 어떻게 움직였는지 보여주고 다시 물어볼게. "
+            f"그때는 사고팔 수 있어. 시장 전체 뉴스는 {ctx['bench_name']} 코드 {ctx.get('bench_code', '')}로 적어.",
+            "- 별일 아니면 아무것도 안 해도 돼.",
+        ]
     lines += [
         "",
         "[내 포트폴리오]",
@@ -458,9 +522,12 @@ def react(ctx, events, triage=None):
         f"체결가에는 미끄러짐 {ctx['slippage'] * 100:.2f}%가 불리한 쪽으로 붙어.",
         "",
         "[쓸 수 있는 도구] 비율은 전부 소수로 적어 (예: 0.07은 7%).",
-        "1) 비중 바꾸기: target_weight에 새 목표 비중(전체 평가금액 대비)을 적어. 0이면 전량 매도. "
-        "한 번에 다 사고팔 필요 없어. 조금 사고 상황을 보며 더 사거나(분할 매수), 일부만 팔아도 돼(분할 매도).",
-        "2) 계획 고치기: target_weight를 빼고 아래 항목만 적으면 매매 없이 계획만 바뀌어. 안 적은 항목은 그대로 두고, 0을 적으면 꺼.",
+        (f"1) 비중 바꾸기: 이번 뉴스 점검에서는 못 해. recheck로 {wait}분 뒤 주가 반응을 보고 할 수 있어."
+         if news else
+         "1) 비중 바꾸기: target_weight에 새 목표 비중(전체 평가금액 대비)을 적어. 0이면 전량 매도. "
+         "한 번에 다 사고팔 필요 없어. 조금 사고 상황을 보며 더 사거나(분할 매수), 일부만 팔아도 돼(분할 매도)."),
+        ("2) 계획 고치기: 아래 항목을 적으면 계획이 바뀌어. 안 적은 항목은 그대로 두고, 0을 적으면 꺼." if news else
+         "2) 계획 고치기: target_weight를 빼고 아래 항목만 적으면 매매 없이 계획만 바뀌어. 안 적은 항목은 그대로 두고, 0을 적으면 꺼."),
         "   - stop_price(또는 평단 대비 stop_pct): 이 가격 아래로 내려가면 자동으로 전량 매도. 수익이 났으면 평단 위로 올려서 이익을 지킬 수도 있어.",
         "   - take_price(또는 평단 대비 take_pct)와 take_frac: 이 가격에 닿으면 take_frac만큼 자동으로 매도. 0.5면 절반만. 팔고 나면 너를 다시 불러서 남은 물량을 어떻게 할지 물어볼게.",
         "   - trail_pct: 오른 뒤 최고가에서 이만큼 빠지면 전량 매도 (따라 올라가는 손절).",
@@ -469,26 +536,42 @@ def react(ctx, events, triage=None):
         "note에 그때 하려는 일을 적어두면 같이 보여줄게. 예: 더 떨어지면 나눠서 더 살지 검토. "
         f"알림은 한 번 울리면 사라지고 최대 {MAX_ALERTS}개야. alerts를 적으면 지금 걸린 알림 전체가 그 목록으로 바뀌고, 안 적으면 그대로야.",
         f"4) 다음 점검: next_check_min({lo}~{hi})에 아무 일이 없어도 다시 볼 시간을 분으로 적어. 불안하면 짧게, 조용하면 길게.",
+    ]
+    if news:
+        lines.append(f"5) 다시 보기: recheck에 종목코드를 적으면 {wait}분 뒤 주가 반응을 보여주고 다시 물어볼게.")
+    lines += [
         "",
         "[규칙]",
         f"- 종목당 비중은 {MIN_WEIGHT} 이상 {MAX_WEIGHT} 이하, 최대 {MAX_POSITIONS}종목.",
         "- actions에는 바꿀 종목만 넣어. 안 넣은 보유 종목은 비중도 계획도 그대로야. 바꿀 게 없으면 \"actions\": [].",
-        "- 코드는 [내 포트폴리오], [갈아탈 후보], [오늘 등락 상위·하위]에 나온 것만 쓸 수 있어.",
+        "- 코드는 [지금 벌어진 일], [내 포트폴리오], [갈아탈 후보], [오늘 등락 상위·하위]에 나온 것만 쓸 수 있어.",
         f"- 오늘 이번 점검 뒤에 남은 점검은 {ctx['reviews_left']}번이야. 다 쓰면 손절·목표가·트레일링만 자동으로 돌아가고 알림은 무시돼.",
+    ]
+    if not news:
+        lines.append("- 뉴스는 틀리거나 소문일 수 있어. 기사만 믿지 말고 주가가 같은 쪽으로 움직였는지, 여러 매체가 확인했는지 같이 봐.")
+    if any(e.get("kind") == "news_followup" for e in events):
+        lines.append("- '뉴스 확인'은 앞서 기사만 보고는 매매하지 않고 주가 반응을 보기로 미뤄둔 뉴스야. 기사가 나온 뒤로 주가가 뉴스 쪽으로 "
+                     "움직였으면 시장이 믿는 거고, 그대로면 이미 반영됐거나 시장이 안 믿는 거야. 시장 전체가 같이 움직였는지도 봐.")
+    weight = "" if news else '"target_weight": 새 비중(선택), '
+    recheck = '"recheck": ["주가 반응을 보고 다시 볼 종목코드"], ' if news else ""
+    lines += [
         "",
         '형식: {"assessment": "지금 상황에 대한 판단 두세 문장", '
-        '"actions": [{"code": "종목코드", "target_weight": 새 비중(선택), "reason": "왜 바꾸는지 한두 문장", '
+        f'"actions": [{{"code": "종목코드", {weight}"reason": "왜 바꾸는지 한두 문장", '
         '"stop_price": 손절가(선택), "take_price": 목표가(선택), "take_frac": 목표가에서 팔 비율(선택), "trail_pct": 트레일링 비율(선택)}], '
         '"alerts": [{"code": "종목코드", "below": 가격(선택), "above": 가격(선택), "note": "그때 하려는 일"}], '
-        '"next_check_min": 분, "cash_reason": "현금 비중에 대한 한 줄"}',
+        f'{recheck}"next_check_min": 분, "cash_reason": "현금 비중에 대한 한 줄"}}',
     ]
     result, meta = chat_json(MODEL_REACT, system_prompt_live(ctx), "\n".join(lines))
     allowed = set(ctx["allowed"])
     alerts, alert_notes = (None, [])
     if "alerts" in result:
-        alerts, alert_notes = clean_alerts(result.get("alerts"), allowed, ctx["ref_prices"])
+        alerts, alert_notes = clean_alerts(
+            result.get("alerts"), allowed, ctx["ref_prices"],
+            min_gap=gap if news else 0.0, existing=ctx.get("alerts") or [],
+        )
     nc = planlib._num(result.get("next_check_min"))
-    return {
+    out = {
         "assessment": str(result.get("assessment", "")),
         "actions": clean_actions(result.get("actions") or [], allowed),
         "alerts": alerts,
@@ -497,3 +580,20 @@ def react(ctx, events, triage=None):
         "cash_reason": str(result.get("cash_reason", "")),
         "meta": meta,
     }
+    if news:
+        out["recheck"] = clean_recheck(result.get("recheck"), allowed | {ctx.get("bench_code")})
+    return out
+
+
+def clean_recheck(raw, allowed):
+    """뉴스 점검에서 '주가 반응을 보고 다시 보자'고 한 종목코드. 목록에 있는 것만, 순서대로 한 번씩."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for c in raw:
+        code = str(c.get("code", "") if isinstance(c, dict) else c).strip()
+        if code in allowed and code not in out:
+            out.append(code)
+    return out

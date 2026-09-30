@@ -1,6 +1,7 @@
 """'AI를 깨울 만한 일인가'를 정하는 순수 함수들. 네트워크도 AI도 안 쓴다."""
 
 import math
+import re
 
 
 def fast_threshold(sigma_daily, window_min, session_minutes, z, min_move):
@@ -53,6 +54,17 @@ def fresh_news(items, seen, now, fresh_min):
         if -300 <= age <= fresh_min * 60:
             out.append(it)
     return out
+
+
+RUMOR = re.compile(
+    r"(매각|인수|합병|퇴진|사임|교체|부도|파산|폐지|분할|철수|감산|철회|결별|위기|해지|취소|중단|이탈|협상|출시|진출)설"
+    r"|루머|찌라시|카더라|소식통|단독|관측|가능성|할 듯|될 듯|검토|\?"
+)
+
+
+def looks_like_rumor(title):
+    """확정되지 않은 이야기처럼 보이는 제목인지 (소문, 단독, 추측 표현). 힌트일 뿐 판정은 AI가 한다."""
+    return bool(RUMOR.search(title or ""))
 
 
 class Seen:

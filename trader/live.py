@@ -8,6 +8,9 @@
     → (뉴스만이면 flash가 먼저 거름) → v4-pro가 비중과 계획을 다시 정함
     → AI 답이 돌아온 그 순간의 시세로 체결
 
+뉴스만 보고는 사고팔지 않는다. 기사만 들어온 점검('뉴스 점검')에서는 손절·목표·알림만 고칠 수 있고,
+AI가 원하면 15분 뒤에 그동안의 주가 반응을 보여주고 다시 물어본다. 매매는 그때 한다.
+
 AI는 한 번 정한 걸 고집하지 않는다. 점검 때마다 비중을 조금씩 늘리거나 줄이고, 손절·목표를 옮기고,
 다음에 불러줄 가격(알림)과 시간(다음 점검)을 스스로 정한다. 장이 열리면 오늘 계획을 한 번 점검한다.
 
@@ -141,6 +144,9 @@ class LiveEngine:
         self.last_news_at = None
         self.next_check_at = None
         self.open_reviewed = False
+        self.news_log = {}       # code -> {기사키: (시각, 매체, 제목)} 매체 수 세기용
+        self.followups = {}      # code -> 뉴스 뒤 주가 반응을 다시 볼 예약
+        self.budget_noted = False
         self.opened_at = None
         self.holiday = False
         self.closed_ticks = 0
@@ -252,6 +258,7 @@ class LiveEngine:
             ("AI 결과 반영", lambda: self._apply_results(q, now, local)),
             ("손절·목표", lambda: self._enforce_plans(q, now, local)),
             ("알림", lambda: self._check_alerts(q, now, local)),
+            ("뉴스 반응 확인", lambda: self._check_followups(q, now, local)),
             ("급변 감지", lambda: self._detect(q, now, local)),
             ("뉴스", lambda: self._poll_news(q, now, local)),
             ("AI 호출", lambda: self._maybe_review(q, now, local)),
@@ -484,11 +491,54 @@ class LiveEngine:
         movers = [v["code"] for v in sorted(stocks, key=lambda v: -abs(v["pct"]))[: LIVE["news_extra_movers"]]]
         return held + cand + movers + MARKET_NEWS[self.market]
 
+    def _remember_news(self, items, now):
+        """최근 기사를 종목별로 기억한다. 같은 이야기를 몇 곳이 썼는지 세는 데 쓴다."""
+        keep = LIVE["news_memory_min"] * 60
+        for it in items:
+            when = it.get("when")
+            if when and -300 <= (now - when).total_seconds() <= keep:
+                self.news_log.setdefault(it["code"], {})[it["key"]] = (when, it.get("source") or "", it["title"])
+        for code in list(self.news_log):
+            log = {k: v for k, v in self.news_log[code].items() if (now - v[0]).total_seconds() <= keep}
+            if log:
+                self.news_log[code] = log
+            else:
+                del self.news_log[code]
+
+    def _credibility(self, code, its, now):
+        """기사를 얼마나 믿을지 AI가 판단할 힌트. 최근 1시간 기사·매체 수, 추측성 제목, 앞서 나온 기사."""
+        out = {"rumor": any(triggers.looks_like_rumor(it["title"]) for it in its)}
+        if code in MARKET_NEWS[self.market]:
+            return out  # 시장 전체 피드는 기사마다 다른 이야기라 세어봐야 의미가 없다
+        fresh = {it["key"] for it in its}
+        recent = sorted(
+            ((k, v) for k, v in self.news_log.get(code, {}).items() if (now - v[0]).total_seconds() <= 3600),
+            key=lambda kv: kv[1][0], reverse=True,
+        )
+        out["articles_1h"] = len(recent)
+        out["sources_1h"] = len({v[1] for _, v in recent if v[1]})
+        out["earlier"] = [
+            {"time": v[0].astimezone(self.tz).strftime("%H:%M"), "source": v[1], "title": v[2]}
+            for k, v in recent if k not in fresh
+        ][:3]
+        return out
+
+    def _ref_prices(self, code, when, now, q):
+        """기사가 나온 무렵의 (가격, 벤치마크 가격, 그 시각). 기록이 거기까지 안 닿으면 지금 값."""
+        bench = self.cfg["benchmark"]["code"]
+        ago = (now - when).total_seconds()
+        if ago > 0:
+            p = self.hist.price_ago(code, ago, now)
+            if p:
+                return p, self.hist.price_ago(bench, ago, now), when
+        return (q.get(code) or {}).get("price"), (q.get(bench) or {}).get("price"), now
+
     def _poll_news(self, q, now, local):
         if self.last_news_at and (now - self.last_news_at).total_seconds() < LIVE["news_seconds"]:
             return
         self.last_news_at = now
         items = self._news(self._news_codes(q))
+        self._remember_news(items, now)
         fresh = triggers.fresh_news(items, self.seen, now, LIVE["news_fresh_min"])
         self._save_seen()
         by_code = {}
@@ -500,10 +550,72 @@ class LiveEngine:
                 {"time": it["when"].astimezone(self.tz).strftime("%H:%M"), "source": it["source"], "title": it["title"]}
                 for it in its
             ]
+            # 나중에 '기사 뒤로 주가가 어떻게 움직였나'를 볼 기준값
+            pc = self._price_code(code)
+            p0, b0, t0 = self._ref_prices(pc, min(it["when"] for it in its), now, q)
+            data = {"items": shown, "price": p0, "bench": b0, "since": t0.astimezone(self.tz).strftime("%H:%M"),
+                    **self._credibility(code, its, now)}
+            cur = (q.get(pc) or {}).get("price")
+            if t0 < now and p0 and cur:
+                data["moved"] = cur / p0 - 1
             self._add_event(
                 now, local, "news", f"{name}: {its[0]['title']}" + (f" 외 {len(its) - 1}건" if len(its) > 1 else ""),
-                code=code, name=name, data={"items": shown},
+                code=code, name=name, data=data,
             )
+
+    def _price_code(self, code):
+        """시장 전체 뉴스는 벤치마크 가격으로 반응을 본다."""
+        return self.cfg["benchmark"]["code"] if code in MARKET_NEWS[self.market] else code
+
+    def _check_followups(self, q, now, local):
+        """뉴스 점검 때 '주가 반응을 보고 다시 보자'고 한 종목. 시간이 되면 반응을 보여주고 다시 부른다."""
+        for code in [c for c, f in self.followups.items() if now >= f["due"]]:
+            self._fire_followup(code, q, now, local)
+
+    def _fire_followup(self, code, q, now, local):
+        bench = self.cfg["benchmark"]["code"]
+        f = self.followups.pop(code)
+        p1, b1 = (q.get(code) or {}).get("price"), (q.get(bench) or {}).get("price")
+        if not p1 or not f.get("price"):
+            return
+        r = p1 / f["price"] - 1
+        rb = b1 / f["bench"] - 1 if b1 and f.get("bench") else None
+        vs = f", 같은 동안 시장 {rb:+.1%}" if rb is not None and code != bench else ""
+        self._add_event(
+            now, local, "news_followup",
+            f"{f['name']} 뉴스 확인: {f['since']} 기사 뒤로 주가 {r:+.1%} "
+            f"({self._fmt(f['price'])} → {self._fmt(p1)}){vs}. 기사: {f['title']}",
+            code=code, name=f["name"], data={"r": r, "rb": rb},
+        )
+
+    def _schedule_followups(self, res, want, blocked, q, now):
+        """뉴스 점검 뒤 주가 반응을 다시 볼 예약. 매매를 막은 종목은 AI가 안 적었어도 다시 본다.
+
+        막은 종목에 이번 기사가 없으면(예: 시장 뉴스를 보고 보유 종목을 팔려던 경우) 이번 기사 전부를 다시 본다.
+        """
+        news = {self._price_code(e["code"]): e for e in res["events"] if e["kind"] == "news" and e.get("code")}
+        want = {self._price_code(c) for c in want}
+        if blocked:
+            hit = {self._price_code(c) for c in blocked} & set(news)
+            want |= hit or set(news)
+        bench = self.cfg["benchmark"]
+        out = []
+        for code in sorted(want & set(news)):
+            if code in self.followups:
+                continue
+            d = news[code].get("data") or {}
+            price = d.get("price") or (q.get(code) or {}).get("price")
+            if not price:
+                continue
+            items = d.get("items") or []
+            name = bench["name"] if code == bench["code"] else self.st["names"].get(code) or news[code]["name"]
+            self.followups[code] = {
+                "due": now + timedelta(minutes=LIVE["news_confirm_min"]), "price": price, "bench": d.get("bench"),
+                "since": d.get("since") or now.astimezone(self.tz).strftime("%H:%M"),
+                "title": items[0]["title"] if items else news[code]["text"], "name": name,
+            }
+            out.append({"code": code, "name": name, "due": self.followups[code]["due"].isoformat()})
+        return out
 
     # ------------------------------------------------------------------ AI 호출
     def _minutes_left(self, local):
@@ -519,43 +631,56 @@ class LiveEngine:
             if not due or self._minutes_left(local) < 15:
                 return
             self._add_event(now, local, "heartbeat", "네가 정한 다음 점검 시간이 됐어 (그동안 특별한 일은 없었어)", quiet=True)
-        only_news = all(e["kind"] == "news" for e in self.events)
-        if only_news:
+        if self.counts["reviews"] >= LIVE["max_reviews_per_day"]:
+            self.events.clear()
+            if not self.budget_noted:
+                self.budget_noted = True
+                self._feed("info", f"오늘 AI 점검 {LIVE['max_reviews_per_day']}번을 다 써서 이후 사건은 넘어가요", now)
+            return
+        # 가격·계획에서 생긴 사건이 먼저다. 기사만 있으면 '뉴스 점검'(매매 없음)으로 따로 본다.
+        priced = [e for e in self.events if e["kind"] != "news"]
+        if priced:
+            if self.last_react_at and (now - self.last_react_at) < timedelta(minutes=LIVE["review_cooldown_min"]):
+                return
+            mode = "trade"
+            codes = {e.get("code") for e in priced if e.get("code")}
+            # 확인을 기다리던 뉴스가 있는 종목이 먼저 움직였으면 기다리지 않고 그 뉴스도 같이 보여준다
+            for code in [c for c in self.followups if c in codes]:
+                self._fire_followup(code, q, now, local)
+            priced = [e for e in self.events if e["kind"] != "news"]
+            related = [e for e in self.events if e["kind"] == "news" and e.get("code") in codes]
+            batch = (priced + related)[:12]  # 같은 종목 기사는 주가가 확인해준 뉴스로 같이 보여준다
+            self.events = [e for e in self.events if not any(e is b for b in batch)]
+        else:
             if self.counts["triages"] >= LIVE["max_triages_per_day"]:
                 self.events.clear()
                 return
-        else:
-            if self.counts["reviews"] >= LIVE["max_reviews_per_day"]:
-                self.events.clear()
-                self._feed("info", f"오늘 AI 점검 {LIVE['max_reviews_per_day']}번을 다 써서 이후 사건은 넘어가요", now)
-                return
-            if self.last_react_at and (now - self.last_react_at) < timedelta(minutes=LIVE["review_cooldown_min"]):
-                return
-        batch, self.events = self.events[:10], self.events[10:]
-        ctx = self._build_ctx(q, now, local)
-        if only_news:
+            mode = "news"
+            batch, self.events = self.events[:10], self.events[10:]
             self.counts["triages"] += 1
+        extra = {self._price_code(e["code"]) for e in batch if e.get("code")}
+        ctx = self._build_ctx(q, now, local, extra_codes=extra)
         self.last_job_at = now
         self.job_running = True
-        job = {"events": batch, "ctx": ctx}
+        job = {"events": batch, "ctx": ctx, "mode": mode}
         if self.sync_worker:
             self._work(job)
         else:
             threading.Thread(target=self._work, args=(job,), daemon=True).start()
 
     def _work(self, job):
-        events, ctx = job["events"], job["ctx"]
-        out = {"events": events, "ref_prices": ctx["ref_prices"]}
+        events, ctx, mode = job["events"], job["ctx"], job.get("mode", "trade")
+        out = {"events": events, "ref_prices": ctx["ref_prices"], "mode": mode}
         t0 = time.time()
         try:
             triage = None
-            if all(e["kind"] == "news" for e in events):
+            if mode == "news":
                 triage = self.ai.triage(ctx, events)
                 out["triage"] = {k: triage.get(k) for k in ("verdict", "importance", "reason")}
                 if triage["verdict"] != "review":
                     out["ignored"] = True
                     return
-            out.update(self.ai.react(ctx, events, triage=triage))
+            out = {**self.ai.react(ctx, events, triage=triage, mode=mode), **out}  # 모드 같은 엔진 값이 이긴다
         except Exception as e:
             out["error"] = f"{type(e).__name__}: {e}"
         finally:
@@ -573,7 +698,7 @@ class LiveEngine:
                     return t["reason"]
         return None
 
-    def _build_ctx(self, q, now, local):
+    def _build_ctx(self, q, now, local, extra_codes=()):
         cfg, st = self.cfg, self.st
         ai = st["players"]["ai"]
         prices = {c: (q[c]["price"] if c in q else p["avg"]) for c, p in ai["positions"].items()}
@@ -618,13 +743,14 @@ class LiveEngine:
         alerts = [{**a, "name": st["names"].get(a["code"]) or (q.get(a["code"]) or {}).get("name")}
                   for a in st.get("alerts") or []]
         allowed = (set(ai["positions"]) | {c["code"] for c in candidates}
-                   | {m["code"] for m in movers_up + movers_down} | {a["code"] for a in alerts})
+                   | {m["code"] for m in movers_up + movers_down} | {a["code"] for a in alerts}
+                   | {c for c in extra_codes if c in q and c != cfg["benchmark"]["code"]})
         ref = {c: q[c]["price"] for c in allowed if c in q}
         ref.update(prices)
         return {
             "market": self.market, "market_name": cfg["name"], "currency": cfg["currency"],
             "fee": cfg["fee"], "sell_tax": cfg["sell_tax"], "slippage": SLIPPAGE[self.market],
-            "bench_name": cfg["benchmark"]["name"],
+            "bench_name": cfg["benchmark"]["name"], "bench_code": cfg["benchmark"]["code"],
             "now_local": local.strftime("%H:%M"), "minutes_left": self._minutes_left(local),
             "equity": eq, "cash": ai["cash"], "holdings": holdings, "bench": bench,
             "movers_up": movers_up, "movers_down": movers_down, "candidates": candidates,
@@ -673,12 +799,19 @@ class LiveEngine:
         eq = broker.equity(ai, prices)
         cur_w = {c: p["shares"] * prices[c] / eq for c, p in ai["positions"].items()}
         targets, touched, notes = dict(cur_w), {}, []
-        plan_updates, plan_only = {}, {}
+        plan_updates, plan_only, blocked = {}, {}, {}
         limit_hit = self.counts["trades"] >= LIVE["max_live_trades_per_day"]
+        news_mode = res.get("mode") == "news"
         for a in res["actions"]:
             code, w = a["code"], a["weight"]
             qq = q.get(code)
             name = names.get(code) or (qq or {}).get("name") or code
+            if news_mode and w is not None:  # 기사만 보고는 안 사고판다. 같이 적은 계획은 받는다
+                if abs(w - cur_w.get(code, 0)) > 0.005:
+                    blocked[code] = name
+                if not a["plan"] or code not in ai["positions"]:
+                    continue
+                w = None
             if w is None:  # 매매 없이 계획만 고치기
                 if code in ai["positions"]:
                     plan_updates[code] = a["plan"]
@@ -719,7 +852,7 @@ class LiveEngine:
             for c, d in inc.items():
                 targets[c] = cur_w.get(c, 0) + d * factor
             targets = {c: w for c, w in targets.items() if w > 1e-9}
-        fills = broker.rebalance(
+        fills = [] if news_mode else broker.rebalance(
             ai, targets, prices, names, self.cfg, day,
             slippage=SLIPPAGE[self.market], at=now.isoformat(), tag="react",
         )
@@ -728,7 +861,15 @@ class LiveEngine:
             if a["plan"]:
                 plan_updates[c] = a["plan"]
         live_prices = {c: q[c]["price"] for c in ai["positions"] if c in q}
-        notes += league.sync_plans(self.st, plan_updates, live_prices)
+        gap = LIVE["news_min_stop_gap"] if news_mode else 0.0
+        notes += league.sync_plans(self.st, plan_updates, live_prices, min_gap=gap)
+        recheck = []
+        if news_mode:
+            recheck = self._schedule_followups(res, res.get("recheck") or [], blocked, q, now)
+            if blocked:
+                notes.insert(0, "기사만 보고는 안 사고팔아서 " + ", ".join(blocked.values())
+                             + (f" 매매는 미뤘어요. {LIVE['news_confirm_min']}분 뒤 주가 반응을 보고 다시 판단해요"
+                                if recheck else " 매매는 안 했어요"))
         if res.get("alerts") is not None:
             self.st["alerts"] = [
                 {**a, "name": names.get(a["code"]) or (q.get(a["code"]) or {}).get("name") or a["code"]}
@@ -746,7 +887,7 @@ class LiveEngine:
             for c, a in plan_only.items()
         ]
         rec = {
-            "time": now.isoformat(), "date": day,
+            "time": now.isoformat(), "date": day, "mode": res.get("mode", "trade"),
             "trigger": [e["text"] for e in res["events"]][:6],
             "assessment": res.get("assessment", ""),
             "cash_reason": res.get("cash_reason", ""),
@@ -755,12 +896,15 @@ class LiveEngine:
             "next_check_min": res.get("next_check_min"),
             "fills": fills, "notes": notes, "seconds": res.get("seconds"),
             "model": (res.get("meta") or {}).get("model"), "triage": res.get("triage"),
+            "recheck": recheck, "blocked": list(blocked.values()),
         }
         self.st["reactions"].append(rec)
         del self.st["reactions"][:-200]
         league.save_state(self.market, self.st)
         if fills:
-            summary = ", ".join(f"{f['name']} {'매수' if f['side'] == 'buy' else '매도'} {f['shares']}주" for f in fills)
+            summary = ", ".join(f"{f['name']} {'매수' if f['side'] == 'buy' else '매도'} {f['shares']:,}주" for f in fills)
+        elif blocked and recheck:
+            summary = "매매는 주가 반응을 본 뒤로 미뤘어요" + (" (계획은 고침)" if plan_updates else "")
         elif plan_updates:
             summary = "매매 없이 계획만 고쳤어요"
         else:
@@ -768,9 +912,12 @@ class LiveEngine:
         extra = []
         if res.get("alerts") is not None:
             extra.append(f"알림 {len(res['alerts'])}개")
+        if recheck:
+            extra.append(f"{', '.join(r['name'] for r in recheck)} {LIVE['news_confirm_min']}분 뒤 주가 반응 확인")
         extra.append(f"다음 점검 {res.get('next_check_min') or LIVE['heartbeat_min']}분 뒤")
+        label = "AI 뉴스 점검" if news_mode else "AI 판단"
         self._feed(
-            "react", f"AI 판단 ({res.get('seconds')}초): {summary}. {res.get('assessment', '')} ({', '.join(extra)})",
+            "react", f"{label} ({res.get('seconds')}초): {summary}. {res.get('assessment', '')} ({', '.join(extra)})",
             now, reaction=rec,
         )
         for n in notes:
@@ -820,6 +967,8 @@ class LiveEngine:
             "last_react_at": self.last_react_at.isoformat() if self.last_react_at else None,
             "next_check_at": self.next_check_at.isoformat() if self.next_check_at else None,
             "alerts": self.st.get("alerts") or [],
+            "followups": [{"code": c, "name": f["name"], "due": f["due"].isoformat(), "title": f["title"]}
+                          for c, f in sorted(self.followups.items(), key=lambda kv: kv[1]["due"])],
             "heartbeat_min": LIVE["heartbeat_min"], "feed": self.feed[-40:], "next_wake": None,
         })
         league.atomic_write(self._file("live"), json.dumps(snap, ensure_ascii=False))

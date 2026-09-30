@@ -63,9 +63,10 @@ def save_state(market, st):
     atomic_write(STATE_DIR / f"{market}.json", json.dumps(st, ensure_ascii=False, indent=1))
 
 
-def sync_plans(st, updates=None, prices=None):
+def sync_plans(st, updates=None, prices=None, min_gap=0.0):
     """AI 보유 종목의 계획을 맞춘다. 판 종목은 지우고, AI의 새 지시(updates)를 반영하고,
-    손절도 트레일링도 없는 종목엔 기본 손절을 건다. 받아들이지 않은 지시에 대한 메모를 돌려준다."""
+    손절도 트레일링도 없는 종목엔 기본 손절을 건다. 받아들이지 않은 지시에 대한 메모를 돌려준다.
+    min_gap은 planlib.apply로 그대로 넘긴다 (계획을 지금 가격에 얼마나 붙일 수 있는지)."""
     held = st["players"]["ai"]["positions"]
     plans = st.setdefault("plans", {})
     notes = []
@@ -75,7 +76,7 @@ def sync_plans(st, updates=None, prices=None):
         plan = planlib.migrate(plans.get(code), pos["avg"])
         update = (updates or {}).get(code)
         if update:
-            plan, skipped = planlib.apply(plan, update, pos["avg"], (prices or {}).get(code))
+            plan, skipped = planlib.apply(plan, update, pos["avg"], (prices or {}).get(code), min_gap)
             notes += [f"{pos['name']}: {n}" for n in skipped]
         plans[code] = planlib.ensure_default(plan, pos["avg"])
     return notes

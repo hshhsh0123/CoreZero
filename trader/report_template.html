@@ -596,6 +596,7 @@ function rulesFooter() {
       h("li", {}, `장중에는 시세를 ${r.poll_seconds}초마다, 뉴스를 ${r.news_seconds}초마다 확인하다가 급변, 새 소식, AI가 걸어둔 가격 알림이 울리면 AI를 깨워요. 체결은 AI가 답한 그 순간의 시세로 해요.`),
       h("li", {}, "AI는 한 번 정한 걸 고집하지 않아요. 점검 때마다 비중을 조금씩 늘리거나 줄이고(분할 매수·매도), 손절가·목표가·트레일링을 옮기고, 다음에 불러줄 가격과 시간을 스스로 정해요. 장이 열리면 오늘 계획을 한 번 점검해요."),
       h("li", {}, `손절, 따라 올라가는 손절, 목표가 매도는 AI 호출 없이 바로 집행하고, 판 뒤에는 AI가 남은 계획을 다시 정해요. 손절도 트레일링도 없으면 평단 대비 10% 손절이 기본으로 걸려요. AI 점검은 하루 ${r.max_reviews}번까지예요.`),
+      h("li", {}, `기사 하나만 보고는 사고팔지 않아요. 기사만 들어온 '뉴스 점검'에서는 손절을 조이거나(지금 가격보다 ${Math.round(r.news_min_stop_gap * 100)}% 넘게 아래까지만) 알림을 걸 수만 있고, 매매는 ${r.news_confirm_min}분 뒤 주가가 시장 대비 어떻게 반응했는지 본 다음에 해요. AI한테는 최근 1시간 기사·매체 수와 '~설', '단독' 같은 추측성 표현도 같이 보여줘요.`),
       h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스와 지표를 읽고 최대 ${r.max_positions}종목을 종목당 ${Math.round(r.min_weight * 100)}~${Math.round(r.max_weight * 100)}% 비중으로 정해요.`),
       h("li", {}, `원숭이는 같은 후보에서 ${r.monkey_picks}종목을 무작위로 골라 똑같이 나눠 사고, 결정 ${r.monkey_every}번마다 새로 찍어요.`),
       h("li", {}, `존버는 첫날 ${benches}를 사서 계속 들고 가요.`),
@@ -609,8 +610,9 @@ const KIND = {
   react: ["AI 판단", "◆"], stop: ["손절", "▼"], trail: ["트레일링", "▼"], take: ["목표 도달", "▲"], fill: ["체결", "●"],
   alert: ["AI 알림", "◎"], fast_move: ["급변", "!"], index_move: ["지수 급변", "!"], day_step: ["오늘 등락", "±"],
   news: ["뉴스", "≡"], triage: ["뉴스 심사", "○"], info: ["안내", "i"], error: ["오류", "×"], daily: ["정산", "✓"],
+  news_followup: ["뉴스 확인", "↻"],
 };
-const LOUD = new Set(["react", "stop", "trail", "take", "fill", "alert", "fast_move", "index_move", "day_step", "error", "daily"]);
+const LOUD = new Set(["react", "stop", "trail", "take", "fill", "alert", "fast_move", "index_move", "day_step", "error", "daily", "news_followup"]);
 
 /* 계획 한 줄: 손절 · 따라 올라가는 손절 · 목표가(분할 매도) */
 function planLine(p, cur) {
@@ -796,6 +798,7 @@ function reactionDetails(f, m) {
   const r = f.reaction;
   const side = x => `${x.name} ${x.side === "buy" ? "매수" : "매도"}`;
   const what = r.fills && r.fills.length ? r.fills.map(side).join(", ")
+    : (r.blocked || []).length && (r.recheck || []).length ? "매매는 주가 반응을 본 뒤로 미룸"
     : (r.actions || []).length ? "계획만 고침" : "지켜보기로 함";
   const summary = what + (r.assessment ? ` · ${r.assessment}` : "");
   const list = (title, items) => items.length ? h("div", {}, h("b", {}, title), h("ul", {}, items.map(x => h("li", {}, x)))) : null;
@@ -809,6 +812,7 @@ function reactionDetails(f, m) {
   const fills = (r.fills || []).map(x => `${side(x)} ${x.shares.toLocaleString("ko-KR")}주 @ ${price(x.price, m.currency)}`);
   const alerts = r.alerts == null ? [] : r.alerts.length ? r.alerts.map(a => alertLine(a, m.currency)) : ["걸어둔 알림을 모두 지움"];
   const pace = r.next_check_min ? [`${r.next_check_min}분 뒤에 다시 보기로 함`] : [];
+  const recheck = (r.recheck || []).map(x => `${x.name}: ${localTime(x.due, m.tz).slice(0, 5)}에 기사 뒤 주가 반응을 보고 다시 판단`);
   return h("details", { "data-k": `feed-${m.key}-${f.t}` },
     h("summary", {}, summary),
     h("div", { class: "fbody" },
@@ -817,14 +821,16 @@ function reactionDetails(f, m) {
       list("바꾼 것", acts),
       list("체결", fills),
       list("새로 건 알림", alerts),
+      list("주가 반응 확인 예약", recheck),
       list("다음 점검", pace),
-      list("건너뛴 것", r.notes || []),
+      list("메모", r.notes || []),
       r.cash_reason ? h("p", {}, r.cash_reason) : null,
       h("p", { class: "meta" }, [r.model && `모델 ${r.model}`, r.seconds && `${r.seconds}초 걸림`].filter(Boolean).join(" · "))));
 }
 
 function feedItem(f, m) {
-  const meta = KIND[f.kind] || [f.kind, "•"];
+  const newsReview = f.kind === "react" && f.reaction && f.reaction.mode === "news";
+  const meta = newsReview ? ["뉴스 점검", "◇"] : KIND[f.kind] || [f.kind, "•"];
   return h("li", { class: `fitem${LOUD.has(f.kind) ? "" : " quiet"}` },
     h("span", { class: "ftime" }, f.t ? localTime(f.t, m.tz) : ""),
     h("span", { class: `badge ${f.kind}` }, h("b", {}, meta[1]), meta[0]),
@@ -850,9 +856,11 @@ function liveCards(m) {
   const toggle = hidden > 0 || FEED.all
     ? h("button", { class: "linkbtn", type: "button", onclick: () => { FEED.all = !FEED.all; render(); } }, FEED.all ? "중요한 것만 보기" : `뉴스·심사 등 ${hidden}건 더 보기`)
     : null;
-  const watching = (m.alerts || []).length || m.next_check_at
+  const follow = m.followups || [];
+  const watching = (m.alerts || []).length || follow.length || m.next_check_at
     ? h("div", { class: "fbody" },
         (m.alerts || []).length ? h("div", {}, h("b", {}, "AI가 걸어둔 알림"), h("ul", {}, m.alerts.map(a => h("li", {}, alertLine(a, m.currency))))) : null,
+        follow.length ? h("div", {}, h("b", {}, "뉴스 뒤 주가 반응 확인"), h("ul", {}, follow.map(x => h("li", {}, `${localTime(x.due, m.tz).slice(0, 5)} ${x.name} — ${x.title}`)))) : null,
         m.next_check_at ? h("p", { class: "meta" }, `아무 일 없으면 ${localTime(m.next_check_at, m.tz).slice(0, 5)}에 다시 점검해요`) : null)
     : null;
   const feedCard = h("section", { class: "card" },
