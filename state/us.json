@@ -7,14 +7,15 @@
   "decided_on": "2026-09-29",
   "targets": {
    "ai": {
-    "NVDA.O": 0.22,
-    "TSM": 0.18,
-    "AVGO.O": 0.13,
+    "NVDA.O": 0.12,
+    "TSM": 0.12,
+    "AMD.O": 0.1,
     "ASML.O": 0.1,
-    "MRVL.O": 0.1,
-    "META.O": 0.08,
-    "AMD.O": 0.05,
-    "AMAT.O": 0.04
+    "META.O": 0.1,
+    "AMAT.O": 0.08,
+    "MRVL.O": 0.08,
+    "MU.O": 0.05,
+    "DELL.K": 0.05
    },
    "monkey": {
     "VZ": 0.2,
@@ -25,6 +26,62 @@
    },
    "hodl": {
     "SPY": 1.0
+   }
+  },
+  "plans": {
+   "NVDA.O": {
+    "stop_pct": 0.08,
+    "take_pct": 0.15,
+    "trail_pct": 0.08,
+    "take_frac": 0.5
+   },
+   "AMD.O": {
+    "stop_pct": 0.12,
+    "take_pct": 0.25,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
+   },
+   "TSM": {
+    "stop_pct": 0.1,
+    "take_pct": 0.2,
+    "trail_pct": 0.08,
+    "take_frac": 0.5
+   },
+   "ASML.O": {
+    "stop_pct": 0.12,
+    "take_pct": 0.2,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
+   },
+   "AMAT.O": {
+    "stop_pct": 0.12,
+    "take_pct": 0.25,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
+   },
+   "MRVL.O": {
+    "stop_pct": 0.15,
+    "take_pct": 0.3,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
+   },
+   "META.O": {
+    "stop_pct": 0.12,
+    "take_pct": 0.2,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
+   },
+   "MU.O": {
+    "stop_pct": 0.15,
+    "take_pct": 0.25,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
+   },
+   "DELL.K": {
+    "stop_pct": 0.15,
+    "take_pct": 0.3,
+    "trail_pct": 0.1,
+    "take_frac": 0.5
    }
   }
  },
@@ -189,164 +246,224 @@
  "journal": [
   {
    "date": "2026-09-29",
-   "decided_at": "2026-09-30T00:43:43.029077+00:00",
-   "scout_view": "최근 60일간 반도체·대형 기술주와 에너지가 강세를 보였으나, 최근 5일은 차익 실현과 업종 순환으로 혼조세다. 전액 현금 상태에서 상승 추세 확인 종목과 과매도 우량주를 중심으로 후보를 추렸다.",
+   "decided_at": "2026-09-30T06:58:25.133435+00:00",
+   "scout_view": "시장은 반도체·AI 관련 기술주 중심으로 강세를 보이고, 금융·소비재·통신 섹터는 상대적으로 약세다. 단기적으로 반도체 및 일부 소프트웨어 종목의 모멘텀이 뚜렷해 이들 중심으로 후보를 추렸다.",
    "shortlist": [
     {
      "code": "NVDA.O",
-     "why": "AI 반도체 대장주, 60일 +16.2%, RSI 54로 과열 없이 안정적 상승",
+     "why": "반도체 대장주로 20일 +2.9%, 60일 +16.2%의 안정적 상승 추세, RSI 54로 과열 부담 적음",
      "name": "엔비디아"
     },
     {
      "code": "AMD.O",
-     "why": "20일 +29.1% 급등, 반도체 모멘텀 강함, 조정 여부 확인 필요",
+     "why": "20일 +29.1%의 강한 모멘텀, 20일선 대비 +12.1%, 고점 대비 -3.7%로 추가 상승 여력",
      "name": "AMD(어드밴스드 마이크로 디바이시스)"
     },
     {
-     "code": "AVGO.O",
-     "why": "반도체 대형주, 최근 조정 후 반등 시도, 20일 -4.1%로 추가 상승 여지",
-     "name": "브로드컴"
-    },
-    {
      "code": "TSM",
-     "why": "파운드리 선두, 20일 +10.0%, RSI 62로 견조한 상승",
+     "why": "반도체 파운드리 선두, 20일 +10.0% 상승, 변동성 26%로 안정적, RSI 62",
      "name": "TSMC ADR"
     },
     {
-     "code": "META.O",
-     "why": "20일 +29.1%, 60일 +23.1%로 강한 모멘텀, AI/광고 수혜",
-     "name": "메타"
-    },
-    {
-     "code": "MRVL.O",
-     "why": "20일 +24.4%, RSI 63, 데이터센터/네트워킹 수요",
-     "name": "마벨 테크놀로지 그룹"
-    },
-    {
-     "code": "INTC.O",
-     "why": "20일 +29.5% 급등, 파운드리 전략 기대, 변동성 크지만 추세 확인",
-     "name": "인텔"
-    },
-    {
-     "code": "AMAT.O",
-     "why": "반도체 장비, 20일 +11.7%, 60일 -13.6%에서 회복, RSI 64",
-     "name": "어플라이드 머티어리얼즈"
-    },
-    {
      "code": "ASML.O",
-     "why": "EUV 독점, 20일 +8.2%, RSI 61, 안정적 상승",
+     "why": "반도체 장비 핵심, 5일 +4.9%, 20일 +8.2%로 단기·중기 모두 강세, RSI 61",
      "name": "ASML 홀딩 ADR"
     },
     {
+     "code": "AMAT.O",
+     "why": "반도체 장비, 5일 +8.4%, 20일 +11.7%로 강한 상승, RSI 64, 고점 대비 -29.2%로 회복 여지",
+     "name": "어플라이드 머티어리얼즈"
+    },
+    {
+     "code": "MRVL.O",
+     "why": "반도체 설계, 20일 +24.4%의 급등, 20일선 대비 +11.0%, RSI 63",
+     "name": "마벨 테크놀로지 그룹"
+    },
+    {
+     "code": "MU.O",
+     "why": "메모리 반도체, 20일 +11.1%, 60일 +8.2%로 업황 개선 기대, RSI 55",
+     "name": "마이크론 테크놀로지"
+    },
+    {
+     "code": "META.O",
+     "why": "20일 +29.1%의 강한 모멘텀, RSI 66, 고점 대비 -5.0%로 AI·광고 성장 기대",
+     "name": "메타"
+    },
+    {
+     "code": "CRWD.O",
+     "why": "사이버보안, 20일 +13.7%, 60일 +31.8%로 강세, 최고가 부근, RSI 78로 과열 가능",
+     "name": "크라우드 스트라이크 홀딩스"
+    },
+    {
+     "code": "DDOG.O",
+     "why": "소프트웨어, 20일 +13.3%, 5일 +8.5%의 강한 상승, RSI 84로 과매수 구간",
+     "name": "데이터도그"
+    },
+    {
+     "code": "PLTR.O",
+     "why": "60일 +41.1%의 장기 상승, RSI 73으로 과열이나 조정 후 재상승 가능성",
+     "name": "팔란티어 테크놀로지스"
+    },
+    {
+     "code": "TMO",
+     "why": "의료장비, 20일 +10.1%, 60일 +31.3%로 강한 모멘텀, RSI 87로 단기 과열",
+     "name": "써모 피셔 사이언티픽"
+    },
+    {
      "code": "LLY",
-     "why": "대형 제약, RSI 75, 20일 +2.4%, 방어적 성장",
+     "why": "제약 대장주, 20일 +2.4%, RSI 75, 변동성 17%로 방어적 성격",
      "name": "일라이 릴리"
     },
     {
-     "code": "XOM",
-     "why": "에너지 대표, 60일 +18.3%, 20일 +0.2%로 조정 후 재상승 가능",
-     "name": "엑슨모빌 홀딩스"
+     "code": "DELL.K",
+     "why": "AI 서버 수혜, 20일 +18.3%, 60일 +31.0%, RSI 51로 중립적",
+     "name": "델테크놀로지"
     },
     {
-     "code": "PFE",
-     "why": "제약, 60일 +21.1%, RSI 77, 배당주로 방어적",
-     "name": "화이자"
-    },
-    {
-     "code": "TSLA.O",
-     "why": "과매도, 20일 -4.1%, 60일 -15.9%, RSI 39, 저가 반등 검토",
-     "name": "테슬라"
-    },
-    {
-     "code": "NFLX.O",
-     "why": "과매도, 20일 -13.3%, RSI 36, 급락 후 반등 여부",
-     "name": "넷플릭스"
-    },
-    {
-     "code": "MCD",
-     "why": "경기 방어적 우량주, 20일 -11.2%, RSI 22 과매도",
-     "name": "맥도날드"
+     "code": "INTC.O",
+     "why": "20일 +29.5%의 이례적 급등, RSI 58, 변동성 75%로 뉴스 확인 필요",
+     "name": "인텔"
     }
    ],
-   "market_view": "채권 금리 상승 부담이 있지만 AI 반도체 수요와 기술주 낙관론이 지지하며 시장은 보합~상승 흐름. 종목별 차별화 장세 예상.",
+   "market_view": "채권 금리 상승 부담 속에서도 AI·반도체 모멘텀이 강하나, 과열 종목은 피하고 현금을 일부 보유해 변동성에 대비한다.",
    "targets": [
     {
      "code": "NVDA.O",
      "name": "엔비디아",
-     "weight": 0.22,
-     "reason": "AI 반도체 대장주, RSI 54로 과열 없이 안정적 상승 지속. 60일 +16.2%로 견조."
+     "weight": 0.12,
+     "reason": "AI 대장주로 상대적으로 안정적, RSI 54로 과열 부담 없음",
+     "plan": {
+      "stop_pct": 0.08,
+      "take_pct": 0.15,
+      "trail_pct": 0.08,
+      "take_frac": 0.5
+     }
     },
     {
      "code": "TSM",
      "name": "TSMC ADR",
-     "weight": 0.18,
-     "reason": "파운드리 선두, RSI 62로 견조한 상승. AI 수요 직접 수혜 종목."
+     "weight": 0.12,
+     "reason": "파운드리 선두, 안정적 변동성 26%, RSI 62",
+     "plan": {
+      "stop_pct": 0.1,
+      "take_pct": 0.2,
+      "trail_pct": 0.08,
+      "take_frac": 0.5
+     }
     },
     {
-     "code": "AVGO.O",
-     "name": "브로드컴",
-     "weight": 0.13,
-     "reason": "최근 조정 후 반등 시도, RSI 44로 저평가. 고점 대비 하락 폭 커 상승 여지."
+     "code": "AMD.O",
+     "name": "AMD(어드밴스드 마이크로 디바이시스)",
+     "weight": 0.1,
+     "reason": "20일 +29%의 강한 모멘텀, AI 인프라 기대",
+     "plan": {
+      "stop_pct": 0.12,
+      "take_pct": 0.25,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
     },
     {
      "code": "ASML.O",
      "name": "ASML 홀딩 ADR",
      "weight": 0.1,
-     "reason": "EUV 독점, RSI 61 안정적. 반도체 장비 필수 기업."
-    },
-    {
-     "code": "MRVL.O",
-     "name": "마벨 테크놀로지 그룹",
-     "weight": 0.1,
-     "reason": "데이터센터/네트워킹 수요, 20일 +24.4% 모멘텀. RSI 63으로 아직 여유."
+     "reason": "반도체 장비 핵심, 최근 5일 +4.9% 강세",
+     "plan": {
+      "stop_pct": 0.12,
+      "take_pct": 0.2,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
     },
     {
      "code": "META.O",
      "name": "메타",
-     "weight": 0.08,
-     "reason": "AI/광고 강한 모멘텀, RSI 66. 단기 급등에도 아직 상승 여지."
-    },
-    {
-     "code": "AMD.O",
-     "name": "AMD(어드밴스드 마이크로 디바이시스)",
-     "weight": 0.05,
-     "reason": "20일 +29.1% 모멘텀 강하지만 RSI 69 과열, 소량만 편입."
+     "weight": 0.1,
+     "reason": "AI·광고 성장 기대로 20일 +29.1%, RSI 66",
+     "plan": {
+      "stop_pct": 0.12,
+      "take_pct": 0.2,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
     },
     {
      "code": "AMAT.O",
      "name": "어플라이드 머티어리얼즈",
-     "weight": 0.04,
-     "reason": "반도체 장비, 1일 +5.2% 급등, RSI 64. 60일 하락에서 회복 중."
+     "weight": 0.08,
+     "reason": "장비주, 20일 +11.7%, 고점 대비 회복 여지",
+     "plan": {
+      "stop_pct": 0.12,
+      "take_pct": 0.25,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
+    },
+    {
+     "code": "MRVL.O",
+     "name": "마벨 테크놀로지 그룹",
+     "weight": 0.08,
+     "reason": "AI 반도체 설계, 20일 +24.4% 급등",
+     "plan": {
+      "stop_pct": 0.15,
+      "take_pct": 0.3,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
+    },
+    {
+     "code": "MU.O",
+     "name": "마이크론 테크놀로지",
+     "weight": 0.05,
+     "reason": "메모리 반도체, RSI 55로 조정 후 재상승 기대",
+     "plan": {
+      "stop_pct": 0.15,
+      "take_pct": 0.25,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
+    },
+    {
+     "code": "DELL.K",
+     "name": "델테크놀로지",
+     "weight": 0.05,
+     "reason": "AI 서버 수혜, RSI 51 중립, 60일 +31%",
+     "plan": {
+      "stop_pct": 0.15,
+      "take_pct": 0.3,
+      "trail_pct": 0.1,
+      "take_frac": 0.5
+     }
     }
    ],
-   "cash_reason": "금리 상승 변동성 대비 및 추가 매수 기회 확보를 위해 현금 10% 유지.",
+   "cash_reason": "채권 금리 상승과 일부 종목 과열에 대비해 현금 20%를 보유하고, 조정 시 추가 매수 여력을 확보한다.",
    "model": "deepseek-v4-pro",
    "usage": {
     "scout": {
      "prompt_tokens": 9942,
-     "completion_tokens": 4732,
-     "total_tokens": 14674,
+     "completion_tokens": 6414,
+     "total_tokens": 16356,
      "prompt_tokens_details": {
-      "cached_tokens": 0
+      "cached_tokens": 9856
      },
      "completion_tokens_details": {
-      "reasoning_tokens": 4025
+      "reasoning_tokens": 5556
      },
-     "prompt_cache_hit_tokens": 0,
-     "prompt_cache_miss_tokens": 9942
+     "prompt_cache_hit_tokens": 9856,
+     "prompt_cache_miss_tokens": 86
     },
     "decide": {
-     "prompt_tokens": 6667,
-     "completion_tokens": 4195,
-     "total_tokens": 10862,
+     "prompt_tokens": 7185,
+     "completion_tokens": 6074,
+     "total_tokens": 13259,
      "prompt_tokens_details": {
-      "cached_tokens": 0
+      "cached_tokens": 384
      },
      "completion_tokens_details": {
-      "reasoning_tokens": 3667
+      "reasoning_tokens": 5125
      },
-     "prompt_cache_hit_tokens": 0,
-     "prompt_cache_miss_tokens": 6667
+     "prompt_cache_hit_tokens": 384,
+     "prompt_cache_miss_tokens": 6801
     }
    },
    "monkey": [
@@ -358,8 +475,11 @@
    ]
   }
  ],
+ "plans": {},
+ "alerts": [],
+ "reactions": [],
  "live": {
-  "at": "2026-09-30T00:43:43.029077+00:00",
+  "at": "2026-09-30T06:58:25.133435+00:00",
   "players": {
    "ai": {
     "equity": 100000.0,
@@ -378,5 +498,5 @@
    }
   }
  },
- "updated_at": "2026-09-30T00:43:43.029077+00:00"
+ "updated_at": "2026-09-30T06:58:25.133435+00:00"
 }
