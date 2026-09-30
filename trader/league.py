@@ -28,7 +28,7 @@ def atomic_write(path, text):
     """쓰다 만 파일을 다른 프로세스가 읽지 않게, 임시 파일에 쓰고 바꿔치기한다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -51,7 +51,7 @@ def new_state(market):
 
 def load_state(market):
     path = STATE_DIR / f"{market}.json"
-    st = json.loads(path.read_text()) if path.exists() else new_state(market)
+    st = json.loads(path.read_text(encoding="utf-8")) if path.exists() else new_state(market)
     st.setdefault("plans", {})
     st.setdefault("reactions", [])
     return st
@@ -350,4 +350,4 @@ def _live(st, get_bars, now):
 def _write_log(market, asof, payload):
     folder = LOG_DIR / market
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{asof}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1))
+    (folder / f"{asof}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")

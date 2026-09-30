@@ -131,9 +131,9 @@ def decide(ctx, details):
         "- 위 [후보 상세]에 있는 코드만 쓸 수 있어.",
         "- 주문은 다음 거래일 시가에 체결돼. 계속 들고 갈 종목도 targets에 다시 넣어야 하고, "
         "빠진 보유 종목은 전부 팔아.",
-        f"- 종목마다 손절 비율 stop_pct(평단보다 이만큼 떨어지면 장중에 자동으로 팔아. {STOP_RANGE[0]}~{STOP_RANGE[1]})를 "
-        f"정해. 목표 수익 비율 take_pct({TAKE_RANGE[0]}~{TAKE_RANGE[1]})는 선택이야. "
-        f"stop_pct를 안 정하면 {DEFAULT_STOP_PCT}가 기본으로 걸려.",
+        f"- 종목마다 손절 비율 stop_pct(평단보다 이만큼 떨어지면 장중에 자동으로 팔아. 소수로 적고 "
+        f"{STOP_RANGE[0]}~{STOP_RANGE[1]} 사이, 예: 0.07은 7%)를 정해. 목표 수익 비율 take_pct({TAKE_RANGE[0]}~{TAKE_RANGE[1]})는 "
+        f"선택이야. stop_pct를 안 정하면 {DEFAULT_STOP_PCT:.0%} 손절이 기본으로 걸려.",
         "- 장중에는 시세와 뉴스를 계속 지켜보다가 큰 일이 생기면 너를 다시 불러서 비중을 고치게 해줄 거야.",
         "",
         '형식: {"market_view": "시장 전체에 대한 한두 문장", '
@@ -422,8 +422,9 @@ def react(ctx, events, triage=None):
         "- actions에는 바꾸고 싶은 종목만 넣어. 안 넣은 보유 종목은 그대로 들고 가. 바꿀 게 없으면 \"actions\": [].",
         "- target_weight는 그 종목의 새 목표 비중(전체 평가금액 대비)이야. 0이면 전량 매도.",
         f"- 종목당 비중은 {MIN_WEIGHT} 이상 {MAX_WEIGHT} 이하, 최대 {MAX_POSITIONS}종목.",
-        f"- 새로 사거나 비중을 늘릴 때는 stop_pct(평단보다 이만큼 떨어지면 자동으로 팔아. {STOP_RANGE[0]}~{STOP_RANGE[1]})를 "
-        f"꼭 정해. take_pct(목표 수익률)는 선택이야. 안 정하면 손절 {DEFAULT_STOP_PCT}가 기본으로 걸려.",
+        f"- 새로 사거나 비중을 늘릴 때는 stop_pct(평단보다 이만큼 떨어지면 자동으로 팔아. 소수로 적고 "
+        f"{STOP_RANGE[0]}~{STOP_RANGE[1]} 사이, 예: 0.07은 7%)를 꼭 정해. take_pct(목표 수익률)는 선택이야. "
+        f"안 정하면 {DEFAULT_STOP_PCT:.0%} 손절이 기본으로 걸려.",
         "- 코드는 [내 포트폴리오], [갈아탈 후보], [오늘 등락 상위·하위]에 나온 것만 쓸 수 있어.",
         "- 이미 손절가가 걸려 있는 종목은 그 가격에 닿으면 자동으로 팔려. 그 전에 네가 먼저 팔 이유가 있을 때만 팔아.",
         "",

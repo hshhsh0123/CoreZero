@@ -157,5 +157,33 @@ class RunFlowTest(unittest.TestCase):
         self.assertEqual(again["decisions"], 2)
 
 
+class Utf8Test(unittest.TestCase):
+    """한국어 윈도우(기본 cp949)에서도 리눅스가 만든 UTF-8 상태 파일을 읽고 쓸 수 있어야 한다."""
+
+    def test_state_roundtrip_under_a_non_utf8_locale(self):
+        import os
+        import subprocess
+        import sys
+
+        root = Path(__file__).resolve().parent.parent
+        code = f'''
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, {str(root)!r})
+from trader import league
+league.STATE_DIR = Path(tempfile.mkdtemp()) / "state"
+st = league.new_state("kr")
+st["journal"].append({{"reason": "한글과 이모지 🚀 그리고 …"}})
+league.save_state("kr", st)
+assert league.load_state("kr")["journal"][0]["reason"].endswith("…")
+print("ok")
+'''
+        script = Path(tempfile.mkdtemp()) / "check.py"
+        script.write_text(code, encoding="utf-8")  # 소스 파일은 로케일과 상관없이 UTF-8로 읽힌다
+        env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0", "PYTHONIOENCODING": "utf-8"}
+        out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(out.stdout.strip(), "ok", out.stderr[-500:])
+
+
 if __name__ == "__main__":
     unittest.main()

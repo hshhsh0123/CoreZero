@@ -163,7 +163,36 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tip .t-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .tip .t-row span { color: var(--ink-2); text-align: right; }
 
+/* ---- 실시간 ---- */
+.rt-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--ink-2); font-size: 13px; }
+.chip.on::before { background: var(--up); animation: pulse 1.6s ease-in-out infinite; }
+.chip.warn::before { background: var(--p-monkey); }
+.chip.think::before { background: var(--p-ai); animation: pulse 0.9s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+.feed { list-style: none; margin: 0; padding: 0; display: grid; }
+.fitem { display: grid; grid-template-columns: 62px 96px minmax(0, 1fr); gap: 4px 10px; padding: 10px 0; border-top: 1px solid var(--hair); font-size: 14px; align-items: baseline; }
+.fitem:first-child { border-top: 0; padding-top: 2px; }
+.ftime { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.badge b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; background: var(--surface-2); color: var(--ink); font-size: 11px; line-height: 1; }
+.badge.react b { background: var(--p-ai); color: var(--surface); }
+.badge.stop b, .badge.take b { background: var(--ink); color: var(--surface); }
+.badge.error b { background: var(--up); color: var(--surface); }
+.ftext { min-width: 0; overflow-wrap: anywhere; }
+.fitem.quiet .ftext { color: var(--ink-2); }
+.fitem details { grid-column: 3; }
+.fitem details > summary { width: auto; font-weight: 500; color: var(--ink); }
+.fbody { display: grid; gap: 8px; margin-top: 8px; color: var(--ink-2); font-size: 13.5px; }
+.fbody ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.fbody .from-to { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+.feed-tools { display: flex; align-items: center; gap: 12px; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--ink-2); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.linkbtn:hover { color: var(--ink); }
+.hitem .p { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
 @media (max-width: 860px) {
+  .fitem { grid-template-columns: 62px minmax(0, 1fr); }
+  .fitem .ftext, .fitem details { grid-column: 1 / -1; }
   .row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "rank who ret" ". eq today" ". trades trades"; row-gap: 8px; }
   .rank { grid-area: rank; }
   .who { grid-area: who; }
@@ -191,7 +220,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 <div class="tip" id="tip" hidden></div>
 
 <script>
-const DATA = /*__DATA__*/null;
+let DATA = /*__DATA__*/null;
 const COLOR = { ai: "--p-ai", monkey: "--p-monkey", hodl: "--p-hodl" };
 const SHORT = { ai: "AI", monkey: "원숭이", hodl: "존버" };
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -444,7 +473,7 @@ function raceCard(m) {
       h("p", { class: "sub" }, "시작일을 0%로 놓고 거래일마다 종가 기준으로 그려요." + (m.live.provisional ? " 점선 끝은 아직 장이 안 끝난 지금 가격이에요." : ""))),
     h("div", { class: "legend" }, m.players.map(p => h("span", {}, h("i", { style: `--c: var(${COLOR[p.key]})` }), p.label))),
     host,
-    h("details", {},
+    h("details", { "data-k": `race-${m.key}` },
       h("summary", {}, "표로 보기"),
       h("div", { class: "scroll" }, h("table", {},
         h("thead", {}, h("tr", {}, h("th", {}, "날짜"), ser.map(s => h("th", { class: "num" }, s.label)))),
@@ -473,7 +502,7 @@ function decisionBody(j, m, compact) {
     body.push(h("ul", { class: "picks" }, items));
   }
   if (!compact && j.shortlist && j.shortlist.length) {
-    body.push(h("details", {},
+    body.push(h("details", { "data-k": `short-${m.key}-${j.date}-${compact ? "c" : "f"}` },
       h("summary", {}, `1단계에서 추린 후보 ${j.shortlist.length}개 보기`),
       j.scout_view && h("p", { class: "meta", style: "margin-top: 10px" }, j.scout_view),
       h("ul", { class: "shortlist" }, j.shortlist.map(s => h("li", {}, h("b", {}, s.name), ` ${s.why}`)))));
@@ -502,7 +531,7 @@ function journalCard(m) {
   if (!past.length) return null;
   return h("section", { class: "card" },
     h("div", { class: "card-head" }, h("h2", {}, "지난 판단"), h("p", { class: "sub" }, "AI가 날마다 뭘 보고 뭘 샀는지 남겨둔 기록이에요.")),
-    h("div", { class: "entries" }, past.map(j => h("details", { class: "entry" },
+    h("div", { class: "entries" }, past.map(j => h("details", { class: "entry", "data-k": `entry-${m.key}-${j.date}` },
       h("summary", {}, `${day(j.date)} 결정 · ${j.targets ? j.targets.map(t => t.name).slice(0, 4).join(", ") + (j.targets.length > 4 ? ` 외 ${j.targets.length - 4}개` : "") : "매매 없음"}`),
       h("div", {}, decisionBody(j, m, true))))));
 }
@@ -513,7 +542,8 @@ function holdingsCard(m) {
     const items = p.positions.map(x => h("li", { class: "hitem" },
       h("span", { class: "n", title: x.name }, x.name),
       h("span", { class: "w" }, `${(x.weight * 100).toFixed(1)}%`),
-      h("span", { class: "d" }, h("span", {}, `${x.shares.toLocaleString("ko-KR")}주 · 평단 ${price(x.avg, m.currency)}`), delta(x.pnl))));
+      h("span", { class: "d" }, h("span", {}, `${x.shares.toLocaleString("ko-KR")}주 · 평단 ${price(x.avg, m.currency)}`), delta(x.pnl)),
+      x.stop ? h("span", { class: "p" }, `손절 ${price(x.stop, m.currency)}` + (x.take ? ` · 목표 ${price(x.take, m.currency)}` : "") + (x.plan_default ? " (기본 손절)" : "")) : null));
     items.push(h("li", { class: "hitem" },
       h("span", { class: "n" }, "현금"),
       h("span", { class: "w" }, `${(p.cash / p.equity * 100).toFixed(1)}%`),
@@ -552,21 +582,240 @@ function tradesCard(m) {
 function rulesFooter() {
   const r = DATA.rules;
   const caps = DATA.markets.map(m => `${m.name} ${money(m.capital, m.currency)}`).join(", ");
-  const costs = DATA.markets.map(m => `${m.name}은 수수료 ${(m.fee * 100).toFixed(3).replace(/0+$/, "")}%` + (m.sell_tax ? `에 매도세 ${(m.sell_tax * 100).toFixed(2)}%` : "")).join(", ");
+  const costs = DATA.markets.map(m => `${m.name}은 수수료 ${(m.fee * 100).toFixed(3).replace(/0+$/, "")}%` + (m.sell_tax ? `에 매도세 ${(m.sell_tax * 100).toFixed(2)}%` : "") + (m.slippage ? `, 체결 미끄러짐 ${(m.slippage * 100).toFixed(2)}%` : "")).join(", ");
   const univ = DATA.markets.map(m => `${m.name} ${m.universe}개`).join(", ");
   const benches = DATA.markets.map(m => m.benchmark).join(", ");
   const box = document.getElementById("rules");
+  box.textContent = "";
   box.append(
     h("h2", {}, "규칙"),
     h("ul", {},
       h("li", {}, `셋 다 같은 돈으로 시작해요: ${caps}.`),
-      h("li", {}, "결정은 장이 끝나 확정된 종가까지의 데이터로 하고, 주문은 다음 거래일 시가에 체결돼요. 장중에 결정하면 그날 장 시작 전 뉴스까지만 봐요."),
+      h("li", {}, "결정은 그 시점에 알 수 있는 정보로만 해요. 장 마감 뒤에는 확정된 종가까지 보고 정하고, 그 주문은 다음 거래일 시가에 체결돼요."),
+      h("li", {}, `장중에는 시세를 ${r.poll_seconds}초마다, 뉴스를 ${r.news_seconds}초마다 확인하다가 급변이나 새 소식이 있을 때만 AI를 깨워요. AI가 정해둔 손절가·목표가는 AI 호출 없이 바로 집행하고, 체결은 AI가 답한 그 순간의 시세로 해요.`),
       h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스와 지표를 읽고 최대 ${r.max_positions}종목을 종목당 ${Math.round(r.min_weight * 100)}~${Math.round(r.max_weight * 100)}% 비중으로 정해요.`),
       h("li", {}, `원숭이는 같은 후보에서 ${r.monkey_picks}종목을 무작위로 골라 똑같이 나눠 사고, 결정 ${r.monkey_every}번마다 새로 찍어요.`),
       h("li", {}, `존버는 첫날 ${benches}를 사서 계속 들고 가요.`),
       h("li", {}, `비용은 ${costs}로 계산해요. 대략적인 가정값이에요.`),
       h("li", {}, "시세와 뉴스는 네이버 증권에서 받아와요.")),
     h("p", { class: "disclaimer" }, "전부 가짜 돈으로 하는 실험이에요. 여기 나온 종목은 투자 추천이 아니에요."));
+}
+
+/* ---------- 실시간 ---------- */
+const KIND = {
+  react: ["AI 판단", "◆"], stop: ["손절", "▼"], take: ["목표 도달", "▲"], fill: ["체결", "●"],
+  fast_move: ["급변", "!"], index_move: ["지수 급변", "!"], day_step: ["오늘 등락", "±"],
+  news: ["뉴스", "≡"], triage: ["뉴스 심사", "○"], info: ["알림", "i"], error: ["오류", "×"], daily: ["정산", "✓"],
+};
+const LOUD = new Set(["react", "stop", "take", "fill", "fast_move", "index_move", "day_step", "error", "daily"]);
+const FEED = { all: false };
+
+function localTime(iso, tz) {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date(iso));
+}
+function minutesOfDay(iso, tz) {
+  const [hh, mm] = localTime(iso, tz).split(":");
+  return +hh * 60 + +mm;
+}
+function hm(s) { const [a, b] = s.split(":").map(Number); return a * 60 + b; }
+
+function rtState(m) {
+  const snap = m.rt && m.rt.snapshot;
+  if (!snap) return null;
+  const age = (Date.parse(DATA.generated_at) - Date.parse(snap.updated_at)) / 1000;
+  const stale = age > Math.max(60, 3 * (snap.poll_seconds || DATA.rules.poll_seconds));
+  const labels = {
+    pre: "장 시작 전", settle: "마감 후 정산 대기", post: "정산 끝, 다음 장 대기", closed: "휴장 (주말)",
+    holiday: "오늘은 휴장", quote_error: "시세 받는 중 오류", quotes_closed: "시세가 '장 마감'으로 표시돼요",
+  };
+  let label = labels[snap.phase] || snap.phase, cls = "";
+  if (snap.phase === "open") {
+    const ago = age >= 5400 ? `${Math.round(age / 3600)}시간` : `${Math.round(age / 60)}분`;
+    label = !stale ? "감시 중" : age >= 120 ? `엔진 멈춤 (마지막 신호 ${ago} 전)` : "엔진 응답 없음";
+    cls = stale ? "warn" : "on";
+  }
+  else if (snap.phase === "quote_error") cls = "warn";
+  return { snap, age, stale, label, cls };
+}
+
+function liveStrip(m) {
+  const s = rtState(m);
+  if (!s) return null;
+  const { snap } = s;
+  const R = DATA.rules;
+  const bits = [h("span", {}, `${localTime(snap.updated_at, m.tz)} 기준 (${m.tz === "Asia/Seoul" ? "한국시간" : "현지시간"})`)];
+  if (snap.phase === "open" && snap.quote_age != null) bits.push(h("span", {}, `시세 지연 ${Math.round(snap.quote_age)}초`));
+  if (snap.job_running) bits.push(h("span", { class: "chip think" }, "AI가 지금 생각 중"));
+  if (snap.queued_events) bits.push(h("span", {}, `대기 중인 사건 ${snap.queued_events}건`));
+  if (snap.counts) bits.push(h("span", {}, `오늘 AI 점검 ${snap.counts.reviews}/${R.max_reviews} · 뉴스 심사 ${snap.counts.triages}/${R.max_triages} · 매매 ${snap.counts.trades}건`));
+  return h("div", { class: "rt-strip" }, h("span", { class: `chip ${s.cls}` }, s.label), bits);
+}
+
+function drawIntraday(host, m) {
+  host.textContent = "";
+  const it = m.rt && m.rt.intraday;
+  const rows = ((it && it.points) || []).filter(r => m.players.every(p => r[p.key] != null));
+  const empty = (title, body) => host.append(h("div", { class: "empty" }, h("strong", {}, title), h("span", {}, body)));
+  if (rows.length < 2) return empty("오늘 장중 기록이 아직 없어요", "장이 열려 있고 실시간 엔진이 돌면 1분마다 한 점씩 찍혀요.");
+  const x0 = hm(m.open), x1 = hm(m.close);
+  const base = {};
+  m.players.forEach(p => {
+    const prev = [...p.history].reverse().find(x => x.date < it.date);
+    base[p.key] = prev ? prev.equity : m.capital;
+  });
+  const ser = m.players.map(p => ({
+    key: p.key, label: p.label,
+    pts: rows.map(r => ({ x: Math.min(x1, Math.max(x0, minutesOfDay(r.t, m.tz))), ret: r[p.key] / base[p.key] - 1, eq: r[p.key], t: r.t })),
+  }));
+  const n = rows.length;
+  const W = Math.max(host.clientWidth, 280);
+  const vals = ser.flatMap(s => s.pts.map(p => p.ret)).concat(0);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 0.004) { const mid = (hi + lo) / 2; lo = mid - 0.002; hi = mid + 0.002; }
+  const ticks = niceTicks(lo, hi, 5);
+  lo = ticks[0]; hi = ticks[ticks.length - 1];
+  const PH = W < 520 ? 200 : 240, padT = 12, padB = 30, padL = 54;
+  const yOf = v => padT + PH * (hi - v) / (hi - lo);
+  const sortedY = ser.map(s => yOf(s.pts[n - 1].ret)).sort((a, b) => a - b);
+  const labelsFit = W >= 420 && sortedY.every((y, i) => i === 0 || y - sortedY[i - 1] >= 16);
+  const padR = labelsFit ? 104 : 14;
+  const plotW = W - padL - padR;
+  const xOf = mins => padL + plotW * (mins - x0) / (x1 - x0);
+  const H = padT + PH + padB;
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", tabindex: "0",
+    "aria-label": "오늘 장중 수익률(어제 종가 대비). " + ser.map(s => `${SHORT[s.key]} ${pct(s.pts[n - 1].ret)}`).join(", ") });
+  for (const t of ticks) {
+    const y = yOf(t);
+    svg.append(sv("line", { x1: padL, x2: padL + plotW, y1: y, y2: y, stroke: t === 0 ? cssVar("--axis") : cssVar("--grid"), "stroke-width": 1, "shape-rendering": "crispEdges" }));
+    svg.append(sv("text", { x: padL - 8, y: y + 4, "text-anchor": "end", class: "tick" }, tickText(t)));
+  }
+  const hourStep = plotW < 420 ? 2 : 1;
+  for (let mins = Math.ceil(x0 / 60) * 60, k = 0; mins <= x1; mins += 60, k++) {
+    if (k % hourStep) continue;
+    svg.append(sv("text", { x: xOf(mins), y: padT + PH + 20, "text-anchor": "middle", class: "tick" }, `${Math.floor(mins / 60)}:00`));
+  }
+  const surface = cssVar("--surface");
+  for (const s of ser) {
+    const color = cssVar(COLOR[s.key]);
+    svg.append(sv("path", { d: s.pts.map((p, i) => `${i ? "L" : "M"}${xOf(p.x).toFixed(1)},${yOf(p.ret).toFixed(1)}`).join(""), fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const last = s.pts[n - 1];
+    svg.append(sv("circle", { cx: xOf(last.x), cy: yOf(last.ret), r: 4, fill: color, stroke: surface, "stroke-width": 2 }));
+    if (labelsFit) svg.append(sv("text", { x: xOf(last.x) + 10, y: yOf(last.ret) + 4, class: "endlabel" }, SHORT[s.key] + " ", sv("tspan", { class: "v" }, pct(last.ret))));
+  }
+  const cross = sv("line", { y1: padT, y2: padT + PH, stroke: cssVar("--axis"), "stroke-width": 1, visibility: "hidden" });
+  const dots = ser.map(s => sv("circle", { r: 4, fill: cssVar(COLOR[s.key]), stroke: surface, "stroke-width": 2, visibility: "hidden" }));
+  svg.append(cross, ...dots);
+  host.append(svg);
+
+  const tip = document.getElementById("tip");
+  let cur = n - 1;
+  function show(i, cx, cy) {
+    cur = i;
+    const x = xOf(ser[0].pts[i].x);
+    cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+    ser.forEach((s, k) => { dots[k].setAttribute("cx", x); dots[k].setAttribute("cy", yOf(s.pts[i].ret)); dots[k].setAttribute("visibility", "visible"); });
+    tip.textContent = "";
+    tip.append(h("div", { class: "t-date" }, `${localTime(ser[0].pts[i].t, m.tz).slice(0, 5)} · 어제 종가 대비`));
+    [...ser].sort((a, b) => b.pts[i].ret - a.pts[i].ret).forEach(s => {
+      const p = s.pts[i];
+      tip.append(h("div", { class: "t-row" }, h("i", { style: `--c: var(${COLOR[s.key]})` }), h("b", {}, pct(p.ret)), h("span", {}, `${SHORT[s.key]} · ${money(p.eq, m.currency)}`)));
+    });
+    tip.hidden = false;
+    const r = tip.getBoundingClientRect();
+    let left = cx + 16, top = cy + 16;
+    if (left + r.width > window.innerWidth - 8) left = cx - r.width - 16;
+    if (top + r.height > window.innerHeight - 8) top = cy - r.height - 16;
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, top) + "px";
+  }
+  function hide() {
+    cross.setAttribute("visibility", "hidden");
+    dots.forEach(d => d.setAttribute("visibility", "hidden"));
+    tip.hidden = true;
+  }
+  svg.addEventListener("pointermove", e => {
+    const box = svg.getBoundingClientRect();
+    const mins = x0 + ((e.clientX - box.left) * (W / box.width) - padL) / plotW * (x1 - x0);
+    let best = 0;
+    for (let i = 1; i < n; i++) if (Math.abs(ser[0].pts[i].x - mins) < Math.abs(ser[0].pts[best].x - mins)) best = i;
+    show(best, e.clientX, e.clientY);
+  });
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("blur", hide);
+  const showAtCursor = () => {
+    const box = svg.getBoundingClientRect();
+    show(cur, box.left + xOf(ser[0].pts[cur].x) * (box.width / W), box.top + yOf(ser[0].pts[cur].ret) * (box.height / H));
+  };
+  svg.addEventListener("focus", showAtCursor);
+  svg.addEventListener("keydown", e => {
+    if (e.key === "ArrowLeft") cur = Math.max(0, cur - 1);
+    else if (e.key === "ArrowRight") cur = Math.min(n - 1, cur + 1);
+    else if (e.key === "Escape") return hide();
+    else return;
+    e.preventDefault();
+    showAtCursor();
+  });
+}
+
+function reactionDetails(f, m) {
+  const r = f.reaction;
+  const side = x => `${x.name} ${x.side === "buy" ? "매수" : "매도"}`;
+  const summary = (r.fills && r.fills.length ? r.fills.map(side).join(", ") : "지켜보기로 함") + (r.assessment ? ` · ${r.assessment}` : "");
+  const list = (title, items) => items.length ? h("div", {}, h("b", {}, title), h("ul", {}, items.map(x => h("li", {}, x)))) : null;
+  const acts = (r.actions || []).map(a => [
+    h("b", {}, a.name), " ", h("span", { class: "from-to" }, `${Math.round(a.from * 100)}% → ${Math.round(a.to * 100)}%`),
+    a.stop_pct ? ` · 손절 ${Math.round(a.stop_pct * 100)}%` : "", a.take_pct ? ` · 목표 +${Math.round(a.take_pct * 100)}%` : "",
+    a.reason ? ` — ${a.reason}` : "",
+  ]);
+  const fills = (r.fills || []).map(x => `${side(x)} ${x.shares.toLocaleString("ko-KR")}주 @ ${price(x.price, m.currency)}`);
+  return h("details", { "data-k": `feed-${m.key}-${f.t}` },
+    h("summary", {}, summary),
+    h("div", { class: "fbody" },
+      list("무슨 일이 있었나", r.trigger || []),
+      r.assessment ? h("p", {}, r.assessment) : null,
+      list("바꾼 것", acts),
+      list("체결", fills),
+      list("건너뛴 것", r.notes || []),
+      r.cash_reason ? h("p", {}, r.cash_reason) : null,
+      h("p", { class: "meta" }, [r.model && `모델 ${r.model}`, r.seconds && `${r.seconds}초 걸림`].filter(Boolean).join(" · "))));
+}
+
+function feedItem(f, m) {
+  const meta = KIND[f.kind] || [f.kind, "•"];
+  return h("li", { class: `fitem${LOUD.has(f.kind) ? "" : " quiet"}` },
+    h("span", { class: "ftime" }, f.t ? localTime(f.t, m.tz) : ""),
+    h("span", { class: `badge ${f.kind}` }, h("b", {}, meta[1]), meta[0]),
+    f.kind === "react" && f.reaction ? reactionDetails(f, m) : h("span", { class: "ftext" }, f.text));
+}
+
+function liveCards(m) {
+  const rt = m.rt;
+  if (!rt) return [];
+  const host = h("div", { class: "chart" });
+  const chartCard = h("section", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "오늘 장중 흐름"),
+      h("p", { class: "sub" }, "어제 종가를 0%로 놓고 1분마다 찍어요.")),
+    liveStrip(m),
+    h("div", { class: "legend" }, m.players.map(p => h("span", {}, h("i", { style: `--c: var(${COLOR[p.key]})` }), p.label))),
+    host);
+  chartCard._draw = () => drawIntraday(host, m);
+  const all = rt.feed || [];
+  const loud = all.filter(f => LOUD.has(f.kind));
+  const hidden = all.length - loud.length;
+  const shown = (FEED.all ? all : loud).slice(0, 40);
+  const toggle = hidden > 0 || FEED.all
+    ? h("button", { class: "linkbtn", type: "button", onclick: () => { FEED.all = !FEED.all; render(); } }, FEED.all ? "중요한 것만 보기" : `뉴스·심사 등 ${hidden}건 더 보기`)
+    : null;
+  const feedCard = h("section", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "지금 벌어지는 일"),
+      h("p", { class: "sub" }, `시세는 ${DATA.rules.poll_seconds}초, 뉴스는 ${DATA.rules.news_seconds}초마다 확인해요. 급변이나 새 소식이 있을 때만 AI를 깨워요.`)),
+    shown.length
+      ? h("ul", { class: "feed" }, shown.map(f => feedItem(f, m)))
+      : h("div", { class: "empty" }, h("strong", {}, "아직 큰 일은 없었어요"), h("span", {}, "급변, 손절, AI 판단 같은 일이 생기면 여기에 쌓여요.")),
+    toggle && h("div", { class: "feed-tools" }, toggle));
+  return [chartCard, feedCard];
 }
 
 /* ---------- 조립 ---------- */
@@ -578,67 +827,117 @@ function renderMarket(m) {
     m.pending && h("span", { class: "chip" }, `주문 대기: ${day(m.pending.decided_on)} 결정분, 다음 장 시가에 체결`),
     m.live.provisional && h("span", { class: "chip live" }, `${day(m.live.date)} 장중 가격 반영`));
   const race = raceCard(m);
+  const [liveChart, liveFeed] = liveCards(m);
   panel.append(
     status,
     headline(m),
     h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "리그 순위")), standings(m)),
+    liveChart || "",
+    liveFeed || "",
     race,
     decisionCard(m) || "",
     holdingsCard(m),
     tradesCard(m) || "",
     journalCard(m) || "");
   panel._race = race;
+  panel._live = liveChart || null;
   return panel;
+}
+
+const UI = { tab: null, open: new Set(), scroll: 0 };
+const conn = { ok: true };
+let views = [], buttons = [];
+
+/* 다시 그려도 열어둔 항목·스크롤·탭이 그대로 있게 한다 */
+function captureUI() {
+  UI.open = new Set([...document.querySelectorAll("details[open][data-k]")].map(d => d.dataset.k));
+  UI.scroll = window.scrollY;
+}
+function restoreUI() {
+  document.querySelectorAll("details[data-k]").forEach(d => { if (UI.open.has(d.dataset.k)) d.open = true; });
+  window.scrollTo(0, UI.scroll);
+}
+function drawPanel(panel) {
+  panel._race._draw();
+  if (panel._live) panel._live._draw();
+}
+function select(key, focus) {
+  views.forEach(({ m, panel }, i) => {
+    const on = m.key === key;
+    panel.hidden = !on;
+    buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+    buttons[i].tabIndex = on ? 0 : -1;
+    if (on) { drawPanel(panel); if (focus) buttons[i].focus(); }
+  });
+  UI.tab = key;
+  try { localStorage.setItem("league-tab", key); } catch (e) {}
+  if (location.hash !== `#${key}`) history.replaceState(null, "", `#${key}`);
+}
+function stampUpdate() {
+  const latest = DATA.markets.map(m => m.updated_at).filter(Boolean).sort().pop();
+  const head = DATA.live_mode ? (conn.ok ? "실시간 연결됨 · " : "연결 끊김 · ") : "";
+  document.getElementById("stamp").textContent = head + (latest ? `마지막 업데이트 ${stampText(latest)} (한국시간)` : "");
+}
+function render() {
+  captureUI();
+  const panels = document.getElementById("panels");
+  panels.textContent = "";
+  views = DATA.markets.map(m => ({ m, panel: renderMarket(m) }));
+  views.forEach(v => panels.append(v.panel));
+  select(views.some(v => v.m.key === UI.tab) ? UI.tab : views[0].m.key);
+  rulesFooter();
+  stampUpdate();
+  restoreUI();
+}
+
+async function refresh() {
+  if (document.hidden) return;
+  try {
+    const res = await fetch("/api/data", { cache: "no-store" });
+    if (!res.ok) throw new Error(String(res.status));
+    DATA = await res.json();
+    conn.ok = true;
+    render();
+  } catch (e) {
+    conn.ok = false;
+    stampUpdate();
+  }
 }
 
 function boot() {
   const tabs = document.getElementById("tabs");
-  const panels = document.getElementById("panels");
   if (!DATA || !DATA.markets.length) {
-    panels.append(h("p", { class: "headline" }, "아직 리그 기록이 없어요. python -m trader run 을 먼저 돌려주세요."));
+    document.getElementById("panels").append(h("p", { class: "headline" }, "아직 리그 기록이 없어요. python -m trader run 을 먼저 돌려주세요."));
     return;
   }
-  const latest = DATA.markets.map(m => m.updated_at).filter(Boolean).sort().pop();
-  document.getElementById("stamp").textContent = latest ? `마지막 업데이트 ${stampText(latest)} (한국시간)` : "";
-  const views = DATA.markets.map(m => ({ m, panel: renderMarket(m) }));
-  const buttons = views.map(({ m }) => h("button", { class: "tab", role: "tab", id: `tab-${m.key}`, "aria-controls": `panel-${m.key}`, type: "button" }, `${m.name} 리그`));
+  buttons = DATA.markets.map(m => h("button", { class: "tab", role: "tab", id: `tab-${m.key}`, "aria-controls": `panel-${m.key}`, type: "button" }, `${m.name} 리그`));
   tabs.append(...buttons);
-  views.forEach(v => panels.append(v.panel));
-
-  function select(key, focus) {
-    views.forEach(({ m, panel }, i) => {
-      const on = m.key === key;
-      panel.hidden = !on;
-      buttons[i].setAttribute("aria-selected", on ? "true" : "false");
-      buttons[i].tabIndex = on ? 0 : -1;
-      if (on) { panel._race._draw(); if (focus) buttons[i].focus(); }
-    });
-    try { localStorage.setItem("league-tab", key); } catch (e) {}
-    if (location.hash !== `#${key}`) history.replaceState(null, "", `#${key}`);
-  }
   buttons.forEach((b, i) => {
-    b.addEventListener("click", () => select(views[i].m.key));
+    b.addEventListener("click", () => select(DATA.markets[i].key));
     b.addEventListener("keydown", e => {
       const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
       if (!d) return;
       e.preventDefault();
-      select(views[(i + d + views.length) % views.length].m.key, true);
+      select(DATA.markets[(i + d + DATA.markets.length) % DATA.markets.length].key, true);
     });
   });
   let first = location.hash.slice(1);
-  if (!views.some(v => v.m.key === first)) {
+  if (!DATA.markets.some(m => m.key === first)) {
     try { first = localStorage.getItem("league-tab"); } catch (e) { first = null; }
   }
-  if (!views.some(v => v.m.key === first)) first = views[0].m.key;
-  select(first);
+  UI.tab = DATA.markets.some(m => m.key === first) ? first : DATA.markets[0].key;
+  render();
 
   let raf = 0;
-  const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => views.forEach(v => { if (!v.panel.hidden) v.panel._race._draw(); })); };
+  const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => views.forEach(v => { if (!v.panel.hidden) drawPanel(v.panel); })); };
   window.addEventListener("resize", redraw);
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   if (mq.addEventListener) mq.addEventListener("change", redraw);
   new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-  rulesFooter();
+  if (DATA.live_mode) {
+    setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  }
 }
 boot();
 </script>
