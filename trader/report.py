@@ -7,9 +7,11 @@ from pathlib import Path
 from . import league, live
 from . import plans as planlib
 from .config import (
+    DEFAULT_STOP_RANGE,
     LIVE,
     MARKETS,
     MAX_POSITIONS,
+    MAX_SECTOR_WEIGHT,
     MAX_WEIGHT,
     MIN_WEIGHT,
     MODEL_DECIDE,
@@ -110,6 +112,15 @@ def collect(runtime_dir=None, live_mode=False):
             "max_triages": LIVE["max_triages_per_day"],
             "news_confirm_min": LIVE["news_confirm_min"],
             "news_min_stop_gap": LIVE["news_min_stop_gap"],
+            "max_sector_weight": MAX_SECTOR_WEIGHT,
+            "default_stop_range": list(DEFAULT_STOP_RANGE),
+            "stop_fast_through": LIVE["stop_fast_through"],
+            "open_quiet_min": LIVE["open_quiet_min"],
+            "min_hold_min": LIVE["min_hold_min"],
+            "max_buy_turnover": LIVE["max_buy_turnover"],
+            "max_daily_loss": LIVE["max_daily_loss"],
+            "chase_limit": LIVE["chase_limit"],
+            "no_trade_before_close_min": {k: v["no_trade_before_close_min"] for k, v in MARKETS.items()},
         },
     }
 
@@ -172,6 +183,7 @@ def _market_view(key, cfg, st, rdir):
     snap = _fresher_snapshot((rt or {}).get("snapshot"), st)
     live_state = (st.get("live") or {}).get("players", {})
     plans = (snap or {}).get("plans") or st.get("plans") or {}
+    sectors = st.get("sectors") or {}
     alerts = (snap or {}).get("alerts") if snap and "alerts" in snap else st.get("alerts") or []
     players = []
     for pkey, label in PLAYERS.items():
@@ -199,6 +211,7 @@ def _market_view(key, cfg, st, rdir):
                 "value": value,
                 "weight": value / eq if eq else 0,
                 "pnl": price / pos["avg"] - 1 if pos["avg"] else 0,
+                "sector": sectors.get(code) or "",
             }
             plan = planlib.migrate(plans.get(code), pos["avg"]) if pkey == "ai" and plans.get(code) else None
             if plan:
@@ -227,6 +240,7 @@ def _market_view(key, cfg, st, rdir):
                 "trades": pl["trades"][-60:][::-1],
                 "n_trades": len(pl["trades"]),
                 "fees": sum(t["cost"] for t in pl["trades"]),
+                "dividends": pl.get("dividends", 0.0),
                 "price_dates": dates,
             }
         )
@@ -266,6 +280,9 @@ def _market_view(key, cfg, st, rdir):
         "alerts": [{**a, "name": st.get("names", {}).get(a.get("code"), a.get("code"))} for a in alerts if isinstance(a, dict)],
         "next_check_at": (snap or {}).get("next_check_at"),
         "followups": (snap.get("followups") or []) if snap and snap.get("phase") == "open" else [],
+        "limits": (snap.get("limits") or None) if snap and snap.get("phase") == "open" else None,
+        "agenda": st.get("agenda") or [],
+        "corp_actions": (st.get("corp_actions") or [])[-6:][::-1],
         "journal": list(reversed(st.get("journal", [])))[:30],
         "rt": rt,
     }

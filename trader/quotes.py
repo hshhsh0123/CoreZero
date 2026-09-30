@@ -35,6 +35,12 @@ def _halted(s):
     return any(word in name for word in ("HALT", "SUSPEND", "STOP"))
 
 
+def _limit(s):
+    """상한가면 "up", 하한가면 "down". 그 가격에서는 한쪽 주문이 체결되지 않는다."""
+    name = str((s.get("compareToPreviousPrice") or {}).get("name") or "").upper()
+    return {"UPPER_LIMIT": "up", "LOWER_LIMIT": "down"}.get(name)
+
+
 def parse_item(market, s, code=None):
     """네이버 시세 항목 하나를 {price, pct(소수), at, status, ...} 로. 가격이 없으면 None."""
     code = code or (s.get("itemCode") if market == "kr" else s.get("reutersCode"))
@@ -54,6 +60,8 @@ def parse_item(market, s, code=None):
         "at": parse_time(s.get("localTradedAt")),
         "status": s.get("marketStatus"),
         "halted": _halted(s),
+        "limit": _limit(s),
+        "open": _num(s.get("openPriceRaw")) or _num(s.get("openPrice")),
     }
 
 
@@ -67,6 +75,17 @@ def _basic_url(market, code):
     if market == "kr":
         return f"https://m.stock.naver.com/api/stock/{code}/basic"
     return f"https://api.stock.naver.com/stock/{code}/basic"
+
+
+def session_open(market, bench_code):
+    """정규장이 지금 열려 있나. 한국은 벤치마크 ETF로 본다 (ETF는 넥스트레이드 시간외에 안 열려서
+    야간에 개별 종목이 'OPEN'이어도 속지 않는다). 모르면 None."""
+    try:
+        s = net.get_json(_basic_url(market, bench_code), timeout=10, retries=2)
+    except Exception:
+        return None
+    status = s.get("marketStatus")
+    return None if status is None else status == "OPEN"
 
 
 def snapshot(market, extra=()):

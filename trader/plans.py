@@ -5,12 +5,20 @@ AI는 가격(stop_price)이나 평단 대비 비율(stop_pct) 어느 쪽으로 �
 AI는 언제든 계획을 다시 쓸 수 있다. 적지 않은 항목은 그대로 두고, 0을 적으면 끈다.
 
 저장 형식: {"stop": 가격, "take": 가격, "take_frac": 0.1~1, "trail_pct": 비율, "high": 트레일링 기준 최고가,
-           "default": 기본 손절이면 True}
+           "default": 기본 손절이면 True, "default_pct": 기본 손절 폭}
 """
 
 import math
 
-from .config import DEFAULT_STOP_PCT, STOP_RANGE, TAKE_FRAC_RANGE, TAKE_RANGE, TRAIL_RANGE
+from .config import (
+    DEFAULT_STOP_PCT,
+    DEFAULT_STOP_RANGE,
+    DEFAULT_STOP_SIGMA,
+    STOP_RANGE,
+    TAKE_FRAC_RANGE,
+    TAKE_RANGE,
+    TRAIL_RANGE,
+)
 
 
 def _num(x):
@@ -141,12 +149,28 @@ def apply(plan, update, avg, price=None, min_gap=0.0):
     return plan, notes
 
 
-def ensure_default(plan, avg):
-    """손절도 트레일링도 없으면 기본 손절을 건다. 기본 손절은 평단이 바뀌면 따라간다."""
+def default_pct(sigma):
+    """하루 변동성(sigma)에 맞춘 기본 손절 폭. 조용한 종목은 좁게, 출렁이는 종목은 넓게. 모르면 10%."""
+    if not sigma:
+        return DEFAULT_STOP_PCT
+    lo, hi = DEFAULT_STOP_RANGE
+    return min(max(DEFAULT_STOP_SIGMA * sigma, lo), hi)
+
+
+def ensure_default(plan, avg, pct=None):
+    """손절도 트레일링도 없으면 기본 손절을 건다.
+
+    폭은 처음 걸 때 정한 값(default_pct)을 계속 쓴다. 더 사서 평단이 오르면 손절도 따라 오르지만,
+    떨어질 때 더 사서(물타기) 평단이 내려가도 손절가는 내려가지 않는다.
+    """
     plan = dict(plan)
     if plan.get("default") or (not plan.get("stop") and not plan.get("trail_pct")):
-        plan["stop"] = avg * (1 - DEFAULT_STOP_PCT)
-        plan["default"] = True
+        # 이미 걸려 있던 기본 손절은 처음 폭을 지킨다 (폭이 적혀 있지 않은 예전 기록은 10%로 걸린 것)
+        p = (plan.get("default_pct") or DEFAULT_STOP_PCT) if plan.get("default") else (pct or DEFAULT_STOP_PCT)
+        level = avg * (1 - p)
+        if plan.get("default") and plan.get("stop"):
+            level = max(level, plan["stop"])
+        plan.update(stop=level, default=True, default_pct=p)
     return plan
 
 

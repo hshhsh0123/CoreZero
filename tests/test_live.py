@@ -17,6 +17,10 @@ CAP = KR["capital"]
 BUY_AVG = 100.0 * (1 + SLIPPAGE["kr"]) * (1 + KR["fee"])  # 100원에 샀을 때 평단 (미끄러짐+수수료)
 
 
+def kst(h, m, d=30):
+    return datetime(2026, 9, d, h, m, tzinfo=live.ZoneInfo("Asia/Seoul")).astimezone(timezone.utc)
+
+
 def bars_for(n=40):
     """하루 ±1% 왔다 갔다 하는 일봉. 일변동성이 약 1%가 된다."""
     out, p = [], 100.0
@@ -87,6 +91,8 @@ class EngineCase(unittest.TestCase):
             mock.patch.object(league, "LOG_DIR", tmp / "logs"),
             mock.patch.object(live, "RUNTIME", tmp / "runtime"),
             mock.patch.dict(LIVE, {"open_review": False}),  # 장 시작 점검은 따로 테스트한다
+            # 가짜 시장은 100원짜리라 호가 반 칸(0.5원)이 0.5%나 된다. 미끄러짐은 기본값만 쓰고 호가는 따로 테스트한다
+            mock.patch.object(broker, "tick_size", lambda market, price, etf=False: 0.0),
         ]
         for p in self.patches:
             p.start()
@@ -122,6 +128,7 @@ class EngineCase(unittest.TestCase):
             "news": lambda codes: list(self.news_items),
             "bars": lambda codes: {c: bars_for() for c in codes},
             "daily": lambda market, now=None, log=print: self.daily_calls.append(now),
+            "opens": lambda codes: {},
             "brain": brain or FakeBrain(),
             "sync_worker": True,
             "strict": True,
@@ -341,8 +348,8 @@ class StopTest(EngineCase):
 
 
 class ExecuteTest(EngineCase):
-    def prepared(self, positions=None):
-        self.seed(positions or {"S1": (50_000, 100.0)})
+    def prepared(self, positions=None, shortlist=("S2",)):
+        self.seed(positions or {"S1": (50_000, 100.0)}, shortlist=shortlist)
         eng = self.engine()
         self.run_ticks(eng, 2)
         return eng
@@ -367,28 +374,31 @@ class ExecuteTest(EngineCase):
         self.assertTrue(any("추격" in n for n in notes) and any("거래할 수 없" in n for n in notes))
 
     def test_buy_sets_plan_and_default_stop(self):
-        eng = self.prepared()
+        eng = self.prepared(shortlist=("S2", "S3"))
         self.go(eng, self.result([act("S2", 0.2, stop_pct=0.07, take_pct=0.15, take_frac=0.5), act("S3", 0.1)]))
         plans = eng.st["plans"]
         self.assertAlmostEqual(plans["S2"]["stop"], BUY_AVG * 0.93)
         self.assertAlmostEqual(plans["S2"]["take"], BUY_AVG * 1.15)
         self.assertEqual(plans["S2"]["take_frac"], 0.5)
         self.assertTrue(plans["S3"]["default"])                     # 안 정하면 기본 손절
-        self.assertAlmostEqual(plans["S3"]["stop"], BUY_AVG * (1 - DEFAULT_STOP_PCT))
+        pct = planlib.default_pct(eng._sigma("S3"))                  # 조용한 종목이라 좁게 (하한 5%)
+        self.assertEqual(pct, 0.05)
+        self.assertAlmostEqual(plans["S3"]["stop"], BUY_AVG * (1 - pct))
         self.assertIn("S1", plans)
 
-    def test_split_buy_moves_default_stop_but_keeps_ai_stop(self):
+    def test_averaging_down_does_not_loosen_the_default_stop(self):
         eng = self.prepared({"S1": (50_000, 100.0), "S4": (50_000, 100.0)})
-        league.sync_plans(eng.st, {"S4": {"stop_price": 93.0}})
-        self.market.prices.update(S1=90.0, S4=90.0)
+        league.sync_plans(eng.st, {"S4": {"stop_price": 91.0}})
+        self.assertAlmostEqual(eng.st["plans"]["S1"]["stop"], 90.0)   # 예전부터 들고 있던 종목: 10%
+        self.market.prices.update(S1=93.0, S4=93.0)
         eng.last_q = self.market.quotes()
-        # 떨어진 김에 둘 다 비중을 늘린다 (분할 매수)
-        self.go(eng, self.result([act("S1", 0.1), act("S4", 0.1)], ref={"S1": 90.0, "S4": 90.0}))
+        # 떨어진 김에 둘 다 비중을 늘린다 (물타기)
+        self.go(eng, self.result([act("S1", 0.1), act("S4", 0.1)], ref={"S1": 93.0, "S4": 93.0}))
         ai = eng.st["players"]["ai"]
         self.assertLess(ai["positions"]["S1"]["avg"], 100.0)
         plans = eng.st["plans"]
-        self.assertAlmostEqual(plans["S1"]["stop"], ai["positions"]["S1"]["avg"] * (1 - DEFAULT_STOP_PCT))
-        self.assertEqual(plans["S4"]["stop"], 93.0)                  # AI가 정한 손절가는 그대로
+        self.assertAlmostEqual(plans["S1"]["stop"], 90.0)            # 평단이 내려가도 손절가는 그대로
+        self.assertEqual(plans["S4"]["stop"], 91.0)                  # AI가 정한 손절가도 그대로
 
     def test_plan_only_update_does_not_trade(self):
         eng = self.prepared()
@@ -413,7 +423,7 @@ class ExecuteTest(EngineCase):
     def test_never_exceeds_cash_or_limits(self):
         codes = [f"S{i}" for i in range(1, 15)]
         self.market = Market(codes)
-        eng = self.prepared({"S1": (250_000, 100.0)})               # 이미 25% 보유
+        eng = self.prepared({"S1": (250_000, 100.0)}, shortlist=codes[1:])   # 이미 25% 보유
         actions = [act(c, 0.30, stop_pct=0.07) for c in codes[1:]]
         self.go(eng, self.result(actions, ref={c: 100.0 for c in codes}))
         ai = eng.st["players"]["ai"]
@@ -438,6 +448,267 @@ class ExecuteTest(EngineCase):
         ai = eng.st["players"]["ai"]
         self.assertNotIn("S2", ai["positions"])
         self.assertNotIn("S1", ai["positions"])                     # 팔기는 허용
+
+
+class RulesTest(EngineCase):
+    """장중 매매 제한: 같은 날 되사기, 최소 보유, 추격, 가격 이탈, 늦은 답, 한도, 마감·장 시작 시간, 상·하한가."""
+
+    def prepared(self, positions=None, shortlist=("S2", "S3"), ticks=2):
+        self.seed(positions or {"S1": (100_000, 100.0)}, shortlist=shortlist)
+        eng = self.engine()
+        self.run_ticks(eng, ticks)
+        return eng
+
+    def result(self, actions, ref=None, **extra):
+        ref = ref or {c: 100.0 for c in ("S1", "S2", "S3", "S4", "S5")}
+        return {"events": [{"text": "테스트", "kind": "heartbeat"}], "actions": actions, "ref_prices": ref,
+                "assessment": "a", "seconds": 1.0, "ctx_at": self.market.now.isoformat(), **extra}
+
+    def go(self, eng, res):
+        eng.last_q = self.market.quotes()
+        eng._execute_react(res, eng.last_q, self.market.now, self.market.now.astimezone(eng.tz))
+        return eng.st["reactions"][-1]["notes"]
+
+    def held(self, eng):
+        return {c: p["shares"] for c, p in eng.st["players"]["ai"]["positions"].items()}
+
+    def test_answer_after_a_stop_does_not_buy_back(self):
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop": 92.0}})
+        eng = self.engine()
+        self.run_ticks(eng, 3)
+        asked_at = self.market.now.isoformat()                         # AI가 95원을 보면서 생각하기 시작
+        self.market.prices["S1"] = 91.0
+        self.run_ticks(eng, 2)                                        # 생각하는 동안 손절 (두 번 확인하고 1분 뒤)
+        self.assertNotIn("S1", self.held(eng))
+        notes = self.go(eng, self.result([act("S1", 0.15, reason="눌림목")], ref={"S1": 95.0}, ctx_at=asked_at))
+        self.assertNotIn("S1", self.held(eng))
+        self.assertTrue(any("생각하는 동안" in n for n in notes))
+        notes = self.go(eng, self.result([act("S1", 0.15)], ref={"S1": 91.0}))   # 새로 물어봐도 오늘은 안 산다
+        self.assertNotIn("S1", self.held(eng))
+        self.assertTrue(any("오늘 판 종목" in n for n in notes))
+
+    def test_fresh_buy_cannot_be_sold_by_the_ai_but_stop_still_works(self):
+        eng = self.prepared()
+        self.go(eng, self.result([act("S2", 0.1, stop_price=95.0)]))
+        self.assertIn("S2", self.held(eng))
+        self.run_ticks(eng, 10)
+        notes = self.go(eng, self.result([act("S2", 0.0, reason="마음이 바뀜")]))
+        self.assertIn("S2", self.held(eng))
+        self.assertTrue(any("분밖에 안 돼서" in n for n in notes))
+        self.market.prices["S2"] = 94.0
+        self.run_ticks(eng, 2)
+        self.assertNotIn("S2", self.held(eng))                        # 손절은 막지 않는다
+        self.assertEqual(eng.st["players"]["ai"]["trades"][-1]["tag"], "stop")
+
+    def test_ai_can_sell_after_the_minimum_hold(self):
+        eng = self.prepared()
+        self.go(eng, self.result([act("S2", 0.1)]))
+        self.run_ticks(eng, 31)
+        self.go(eng, self.result([act("S2", 0.0)]))
+        self.assertNotIn("S2", self.held(eng))
+
+    def test_only_holdings_and_researched_candidates_can_be_bought(self):
+        eng = self.prepared()
+        notes = self.go(eng, self.result([act("S5", 0.1, reason="오늘 제일 많이 오름")]))
+        self.assertNotIn("S5", self.held(eng))
+        self.assertTrue(any("추격매수" in n for n in notes))
+
+    def test_price_drift_skips_trades_and_asks_again_for_sells(self):
+        eng = self.prepared()
+        self.market.prices.update(S1=96.5, S2=97.0)                   # AI가 볼 때는 둘 다 100
+        notes = self.go(eng, self.result([act("S1", 0.0), act("S2", 0.1)]))
+        self.assertIn("S1", self.held(eng))
+        self.assertNotIn("S2", self.held(eng))
+        self.assertTrue(any("매도는 다시 물어볼게요" in n for n in notes) and any("내려서 매수는 건너뜀" in n for n in notes))
+        retry = [e for e in eng.events if e["kind"] == "retry"]
+        self.assertEqual(len(retry), 1)
+        self.go(eng, self.result([act("S1", 0.0)]))                   # 또 이탈해도 다시 묻는 건 하루 한 번
+        self.assertEqual(len([e for e in eng.events if e["kind"] == "retry"]), 1)
+
+    def test_late_answer_keeps_plans_but_skips_trades(self):
+        eng = self.prepared()
+        old = (self.market.now - timedelta(minutes=6)).isoformat()
+        notes = self.go(eng, self.result([act("S1", 0.0, stop_price=96.0)], ctx_at=old))
+        self.assertIn("S1", self.held(eng))
+        self.assertEqual(eng.st["plans"]["S1"]["stop"], 96.0)
+        self.assertTrue(any("늦게 와서" in n for n in notes))
+        self.assertEqual([e["kind"] for e in eng.events], ["retry"])
+
+    def test_intraday_buying_is_capped_at_30_percent_a_day(self):
+        eng = self.prepared(positions={"S1": (10_000, 100.0)})
+        self.go(eng, self.result([act("S2", 0.2)]))
+        notes = self.go(eng, self.result([act("S3", 0.2)]))
+        day = self.market.now.astimezone(eng.tz).date().isoformat()
+        bought = eng._bought_today(day)
+        self.assertLessEqual(bought, 0.30 * CAP * 1.001)
+        self.assertGreater(bought, 0.29 * CAP)
+        self.assertTrue(any("매수 한도" in n for n in notes))
+        self.go(eng, self.result([act("S3", 0.25)]))
+        self.assertAlmostEqual(eng._bought_today(day), bought)       # 다 쓰면 더는 안 산다
+
+    def test_sector_cap_limits_buys(self):
+        eng = self.prepared(positions={"S1": (300_000, 100.0)})       # 30%
+        eng.st["sectors"] = {"S1": "반도체", "S2": "반도체", "S3": "은행"}
+        notes = self.go(eng, self.result([act("S2", 0.2), act("S3", 0.1)]))
+        ai = eng.st["players"]["ai"]
+        eq = broker.equity(ai, {c: 100.0 for c in ai["positions"]})
+        semis = sum(ai["positions"][c]["shares"] * 100.0 for c in ("S1", "S2")) / eq
+        self.assertLessEqual(semis, 0.40 + 0.002)
+        self.assertAlmostEqual(ai["positions"]["S3"]["shares"] * 100.0 / eq, 0.1, places=2)
+        self.assertTrue(any("반도체" in n for n in notes))
+
+    def test_daily_loss_limit_blocks_new_buys(self):
+        eng = self.prepared()
+        eng.st["players"]["ai"]["history"][-1]["equity"] = CAP * 1.05   # 어제보다 5% 잃은 상태
+        notes = self.go(eng, self.result([act("S2", 0.1), act("S1", 0.05)]))
+        self.assertNotIn("S2", self.held(eng))
+        self.assertLess(self.held(eng)["S1"], 100_000)                 # 줄이는 건 된다
+        self.assertTrue(any("손실 한도" in n for n in notes))
+
+    def test_no_ai_trades_just_before_the_close(self):
+        eng = self.prepared()
+        self.market.now = kst(15, 22)
+        notes = self.go(eng, self.result([act("S1", 0.0, stop_price=97.0)]))
+        self.assertIn("S1", self.held(eng))
+        self.assertEqual(eng.st["plans"]["S1"]["stop"], 97.0)
+        self.assertTrue(any("마감 10분 전" in n for n in notes))
+
+    def test_no_new_buys_in_the_first_15_minutes(self):
+        self.seed({"S1": (100_000, 100.0)}, shortlist=("S2",))
+        eng = self.engine()
+        self.market.now = kst(8, 59)
+        self.market.status = "CLOSE"
+        self.run_ticks(eng, 1)
+        self.market.status = "OPEN"
+        self.run_ticks(eng, 5)                                        # 09:05
+        notes = self.go(eng, self.result([act("S2", 0.1), act("S1", 0.05)]))
+        self.assertNotIn("S2", self.held(eng))
+        self.assertLess(self.held(eng)["S1"], 100_000)
+        self.assertTrue(any("15분은 새로 안 사요" in n for n in notes))
+
+    def test_limit_up_and_down(self):
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop": 92.0}}, shortlist=("S2",))
+        base = self.market.quotes
+        limits = {}
+        self.market.quotes = lambda: {c: {**v, "limit": limits.get(c)} for c, v in base().items()}
+        eng = self.engine()
+        self.run_ticks(eng, 2)
+        limits["S2"] = "up"
+        notes = self.go(eng, self.result([act("S2", 0.1)]))
+        self.assertTrue(any("상한가" in n for n in notes))
+        limits["S1"] = "down"
+        self.market.prices["S1"] = 70.0
+        self.run_ticks(eng, 3)
+        self.assertIn("S1", self.held(eng))                           # 하한가에서는 손절이 체결되지 않는다
+        limits.pop("S1")
+        self.market.prices["S1"] = 72.0
+        self.run_ticks(eng, 1)
+        self.assertNotIn("S1", self.held(eng))                        # 풀리자마자 판다
+
+    def test_stop_far_through_sells_on_the_first_tick(self):
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop": 92.0}})
+        eng = self.engine()
+        self.run_ticks(eng, 2)
+        self.market.prices["S1"] = 89.0                               # 92의 2% 아래보다 더 깊다
+        self.run_ticks(eng, 1)
+        self.assertNotIn("S1", self.held(eng))
+
+    def test_overflowing_events_drop_news_first(self):
+        eng = self.prepared()
+        now, local = self.market.now, self.market.now.astimezone(eng.tz)
+        eng.events = []
+        eng._add_event(now, local, "stop", "손절", code="S1")
+        for i in range(40):
+            eng._add_event(now, local, "news", f"기사 {i}", code="S1", quiet=True)
+        self.assertEqual(len(eng.events), 30)
+        self.assertEqual(eng.events[0]["kind"], "stop")
+
+    def test_thesis_is_a_buy_reason(self):
+        eng = self.prepared()
+        eng.st["reactions"] = [
+            {"actions": [{"code": "S1", "from": 0.0, "to": 0.1, "reason": "실적이 좋아서 샀다"}]},
+            {"actions": [{"code": "S1", "from": 0.1, "to": 0.05, "reason": "절반 익절"}]},
+            {"actions": [{"code": "S1", "from": 0.05, "to": None, "reason": "손절만 올림"}]},
+        ]
+        self.assertEqual(eng._thesis("S1"), "실적이 좋아서 샀다")
+
+
+class RestartAndSplitTest(EngineCase):
+    def test_restart_picks_up_the_day(self):
+        self.seed({"S1": (100_000, 100.0)})
+        b1 = FakeBrain(reply={"recheck": ["S1"]})
+        with mock.patch.dict(LIVE, {"open_review": True}):
+            e1 = self.engine(b1)
+            self.run_ticks(e1, 17)                                    # 장 시작 점검(09:15 이후 바로)
+            self.market.prices["S1"] = 104.0                          # 오늘 +4%
+            self.run_ticks(e1, 8)
+            self.news_items = [{"code": "S1", "key": "n1", "when": self.market.now - timedelta(minutes=1),
+                                "title": "A사 매각설", "source": "x"}]
+            e1.last_news_at = None
+            self.run_ticks(e1, 3)
+            kinds_before = [self.kinds(c) for c in b1.react_calls]
+            self.assertEqual(list(e1.followups), ["S1"])
+            b2 = FakeBrain()
+            e2 = self.engine(b2)                                      # 같은 날 다시 켰다
+            self.run_ticks(e2, 3)
+        self.assertEqual([k for k in kinds_before if "open" in k], [["open"]])
+        self.assertEqual(b2.react_calls, [])                          # 장 시작 점검·오늘 등락을 다시 안 한다
+        self.assertEqual(list(e2.followups), ["S1"])                  # 뉴스 다시 보기 예약도 이어진다
+        self.assertIsNotNone(e2.hist.ret("S1", 900, self.market.now))   # 15분 시세 기록도 있다
+        self.assertTrue(e2.open_reviewed)
+
+    def split_engine(self, stored_date="2026-09-29"):
+        self.seed({"S1": (10_000, 1000.0)}, plans={"S1": {"stop": 900.0}})
+        st = league.load_state("kr")
+        st["closes"] = {"S1": {"date": stored_date, "close": 1000.0}}
+        league.save_state("kr", st)
+        days = [(date(2026, 9, 29) - timedelta(days=39 - i)).isoformat() for i in range(40)]
+        adjusted = [{"date": d, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1e6} for d in days]
+        return self.engine(bars=lambda codes: {c: adjusted for c in codes})
+
+    def test_split_is_applied_before_stops(self):
+        eng = self.split_engine()                                     # 어제 1,000원 → 오늘 10:1 분할로 100원
+        self.run_ticks(eng, 3)
+        ai = eng.st["players"]["ai"]
+        self.assertEqual(ai["positions"]["S1"]["shares"], 100_000)
+        self.assertAlmostEqual(ai["positions"]["S1"]["avg"], 100.0)
+        self.assertAlmostEqual(eng.st["plans"]["S1"]["stop"], 90.0)
+        self.assertEqual(ai["trades"], [])                            # 900원 손절이 100원에 나가지 않는다
+        self.assertTrue(any("분할" in e["text"] for e in eng.feed))
+
+    def test_unexplained_jump_pauses_stops(self):
+        eng = self.split_engine(stored_date="2026-09-01")             # 적어 둔 날짜가 오래돼서 분할을 확정할 수 없다
+        eng.st["closes"]["S1"]["date"] = "2026-08-01"
+        self.run_ticks(eng, 3)
+        ai = eng.st["players"]["ai"]
+        self.assertEqual(ai["trades"], [])
+        self.assertEqual(len([e for e in eng.feed if "손절을 멈춰요" in e["text"]]), 1)
+
+    def test_open_price_from_elsewhere_when_the_bar_is_late(self):
+        pend = {"decided_on": "2026-09-29", "targets": {"ai": {"S2": 0.2, "S3": 0.1}, "monkey": None, "hodl": None}}
+        self.seed(pending=pend, shortlist=("S2", "S3"))
+        today = {"date": "2026-09-30", "open": 100.0, "high": 101, "low": 99, "close": 100.5, "volume": 1e6}
+        opens = {"S3": 101.0}
+        eng = self.engine(bars=lambda codes: {c: bars_for() + ([today] if c != "S3" else []) for c in codes},
+                          opens=lambda codes: {c: opens.get(c) for c in codes})
+        self.run_ticks(eng, 12)
+        ai = eng.st["players"]["ai"]
+        self.assertEqual(set(ai["positions"]), {"S2", "S3"})
+        s3 = [t for t in ai["trades"] if t["code"] == "S3"][0]
+        self.assertAlmostEqual(s3["price"], 101.0 * (1 + SLIPPAGE["kr"]))
+
+    def test_unfilled_orders_are_reported(self):
+        pend = {"decided_on": "2026-09-29", "targets": {"ai": {"S2": 0.2, "S3": 0.1}, "monkey": None, "hodl": None}}
+        self.seed(pending=pend, shortlist=("S2", "S3"))
+        st = league.load_state("kr")
+        st["journal"].append({"date": "2026-09-29", "targets": []})
+        league.save_state("kr", st)
+        today = {"date": "2026-09-30", "open": 100.0, "high": 101, "low": 99, "close": 100.5, "volume": 1e6}
+        eng = self.engine(bars=lambda codes: {c: bars_for() + ([today] if c != "S3" else []) for c in codes})
+        self.run_ticks(eng, 12)
+        self.assertEqual(set(eng.st["players"]["ai"]["positions"]), {"S2"})
+        self.assertEqual([u["code"] for u in eng.st["journal"][-1]["unfilled"]], ["S3"])
+        self.assertTrue(any("못 산 종목" in e["text"] for e in eng.feed))
 
 
 class AlertAndPacingTest(EngineCase):
@@ -559,28 +830,95 @@ class SessionFlowTest(EngineCase):
         self.assertIsNotNone(eng.st["pending"])
         self.assertEqual(eng.st["players"]["ai"]["positions"], {})
 
+    def daily_ok(self, market, now=None, log=print):
+        """진짜 정산처럼 오늘 결정을 남기는 가짜 하루 정산."""
+        self.daily_calls.append(now)
+        st = league.load_state(market)
+        st["last_decided"] = now.astimezone(live.ZoneInfo("Asia/Seoul")).date().isoformat()
+        league.save_state(market, st)
+
     def test_daily_settlement_runs_once_after_close(self):
         self.seed()
-        eng = self.engine()
-        kst = live.ZoneInfo("Asia/Seoul")
-        at = lambda h, m: datetime(2026, 9, 30, h, m, tzinfo=kst).astimezone(timezone.utc)
-        eng.tick(at(15, 40))
+        eng = self.engine(daily=self.daily_ok)
+        eng.tick(kst(15, 40))
         self.assertEqual(self.daily_calls, [])                         # 아직 정산 대기 시간
-        eng.tick(at(15, 55))
-        eng.tick(at(16, 5))
+        eng.tick(kst(15, 55))
+        eng.tick(kst(16, 5))
+        eng.tick(kst(16, 30))
         self.assertEqual(len(self.daily_calls), 1)
 
-    def test_holiday_is_detected_from_quotes(self):
+    def test_daily_settlement_retries_while_todays_bar_is_missing(self):
+        self.seed()
+        eng = self.engine()                                           # 가짜 정산은 오늘 결정을 못 남긴다 (봉이 늦음)
+        self.run_ticks(eng, 2)                                        # 오늘 장이 열린 걸 봤다
+        self.market.status = "CLOSE"
+        for m in (31, 32, 33):                                        # 세 번 연속 닫힘: 15:33 정규장 끝
+            eng.tick(kst(15, m))
+        for h, m in ((15, 55), (16, 0), (16, 6), (16, 17)):
+            eng.tick(kst(h, m))
+        self.assertEqual(len(self.daily_calls), 3)                    # 10분마다 다시
+        self.assertIn("아직 안 올라와서", [e for e in eng.feed if e["kind"] == "info"][-1]["text"])
+        eng.tick(kst(19, 40))                                         # 마감 4시간 뒤: 포기하고 알린다
+        eng.tick(kst(20, 0))
+        self.assertEqual(len(self.daily_calls), 4)
+        self.assertTrue(any("끝내 안 올라와서" in e["text"] for e in eng.feed))
+
+    def test_holiday_needs_hours_of_closed_quotes(self):
         self.seed()
         self.market.status = "CLOSE"
         calls = []
         eng = self.engine(quotes=lambda: calls.append(1) or self.market.quotes())
-        self.market.now = T0 - timedelta(hours=1) + timedelta(minutes=5)   # 09:05
-        self.run_ticks(eng, 8)
+        self.market.now = kst(9, 5)
+        self.run_ticks(eng, 10, step=600)                             # 10:45까지: 늦게 여는 날일 수도 있으니 기다린다
+        self.assertFalse(eng.holiday)
+        self.run_ticks(eng, 10, step=600)                             # 12시 넘음: 휴장일
         self.assertTrue(eng.holiday)
         n = len(calls)
         self.run_ticks(eng, 3)
         self.assertEqual(len(calls), n)
+
+    def test_late_open_starts_the_quiet_period_when_the_market_opens(self):
+        self.seed({"S1": (100_000, 100.0)}, shortlist=("S2",))
+        self.market.status = "CLOSE"
+        brain_ = FakeBrain(actions=[act("S2", 0.1, reason="살래")])
+        with mock.patch.dict(LIVE, {"open_review": True}):
+            eng = self.engine(brain_)
+            self.market.now = kst(9, 0)
+            self.run_ticks(eng, 6, step=600)                          # 10:00까지 닫혀 있다 (새해 첫날·수능일)
+            self.market.status = "OPEN"
+            self.run_ticks(eng, 10)
+            self.assertEqual(eng.session_start, kst(10, 0))
+            self.assertEqual(brain_.react_calls, [])                  # 장 시작 점검은 15분 뒤
+            self.run_ticks(eng, 8)
+        self.assertEqual(brain_.react_calls[0][1][0]["kind"], "open")
+        self.assertIn("S2", eng.st["players"]["ai"]["positions"])     # 조용한 시간 뒤라 살 수 있다
+
+    def test_late_close_keeps_watching_until_the_index_closes(self):
+        self.seed({"S1": (100_000, 100.0)})
+        calls = []
+        eng = self.engine(daily=self.daily_ok, quotes=lambda: calls.append(1) or self.market.quotes())
+        self.market.now = kst(15, 20)
+        self.run_ticks(eng, 60)                                       # 16:20까지 지수가 계속 열려 있다 (수능일)
+        n = len(calls)
+        self.assertGreater(n, 55)
+        self.assertEqual(self.daily_calls, [])
+        self.market.status = "CLOSE"
+        self.run_ticks(eng, 4)                                        # 16:24 정규장 끝
+        self.assertEqual(eng.session_end, kst(16, 22))
+        for h, m in ((16, 30), (16, 41)):
+            eng.tick(kst(h, m))
+        self.assertEqual(self.daily_calls, [])                        # 끝나고 20분은 기다린다
+        eng.tick(kst(16, 43))
+        self.assertEqual(len(self.daily_calls), 1)
+
+    def test_after_hours_stock_quotes_do_not_open_the_session(self):
+        self.seed()
+        eng = self.engine()
+        q = self.market.quotes()
+        q["069500"]["status"] = "CLOSE"                                # 넥스트레이드 시간외: 종목은 OPEN, ETF는 CLOSE
+        self.assertFalse(eng._market_open(q))
+        q["069500"]["status"] = "OPEN"
+        self.assertTrue(eng._market_open(q))
 
     def test_snapshot_files_for_dashboard(self):
         self.seed({"S1": (50_000, 100.0)}, alerts=[{"code": "S2", "below": 90.0, "above": None, "note": ""}])
@@ -773,7 +1111,7 @@ class NewsPromptTest(EngineCase):
     def ask(self, mode, answer):
         prompts = []
 
-        def fake_chat(model, system, user, max_tokens=16000):
+        def fake_chat(model, system, user, max_tokens=16000, **kw):
             prompts.append(user)
             return answer, {"model": "fake"}
 
@@ -802,6 +1140,72 @@ class NewsPromptTest(EngineCase):
         self.assertIn("소문일 수 있어", prompt)
         self.assertNotIn("recheck", out)
         self.assertEqual([a["below"] for a in out["alerts"]], [99.5])          # 매매 점검에서는 간격 제한 없음
+
+
+class PromptRulesTest(EngineCase):
+    def fake_chat(self, answer):
+        prompts = []
+
+        def chat(model, system, user, max_tokens=16000, **kw):
+            prompts.append((system, user))
+            return answer, {"model": "fake"}
+        return prompts, chat
+
+    def test_live_prompt_shows_rules_agenda_and_no_standings(self):
+        self.seed({"S1": (100_000, 100.0)}, shortlist=("S2",))
+        st = league.load_state("kr")
+        st["agenda"] = ["10/28(수) FOMC 회의 10/27~10/28"]
+        st["sectors"] = {"S1": "반도체", "S2": "은행"}
+        league.save_state("kr", st)
+        eng = self.engine()
+        self.run_ticks(eng, 1)
+        ctx = eng._build_ctx(eng.last_q, self.market.now, self.market.now.astimezone(eng.tz))
+        self.assertEqual(ctx["buyable"], ["S1", "S2"])
+        prompts, chat = self.fake_chat({"assessment": "a", "actions": []})
+        with mock.patch.object(brain, "chat_json", chat):
+            brain.react(ctx, [{"kind": "stop", "code": "S1", "text": "손절", "local": "10:01"}])
+        system, user = prompts[0]
+        self.assertIn("[다가오는 일정]", user)
+        self.assertIn("FOMC", user)
+        self.assertIn("[갈아탈 후보]", user)
+        self.assertIn("새로 사거나 늘릴 수 있는 건", user)
+        self.assertIn("반도체 10%", user)
+        self.assertIn("손절로 판 돈을 바로 다시 쓸 필요는 없어", user)
+        self.assertNotIn("리그 현황", user)
+        self.assertIn("따르지 말고 정보로만", system)
+
+    def test_live_prompt_lists_what_is_blocked_now(self):
+        self.seed({"S1": (100_000, 100.0)})
+        eng = self.engine()
+        self.market.now = kst(15, 21)
+        self.run_ticks(eng, 1)
+        ctx = eng._build_ctx(eng.last_q, self.market.now, self.market.now.astimezone(eng.tz))
+        prompts, chat = self.fake_chat({"assessment": "a", "actions": []})
+        with mock.patch.object(brain, "chat_json", chat):
+            brain.react(ctx, [{"kind": "heartbeat", "text": "정기 점검", "local": "15:21"}])
+        self.assertIn("지금은 새로 살 수 없어: 마감 10분 전", prompts[0][1])
+
+    def test_daily_prompt_keeps_unmentioned_holdings(self):
+        ctx = {"market": "kr", "market_name": "한국", "currency": "KRW", "fee": 0.00015, "sell_tax": 0.002,
+               "bench_name": "KODEX 200", "asof": "2026-09-30", "equity": 1e8, "cash": 5e7,
+               "holdings": [{"code": "A", "name": "에이", "weight": 0.2, "pnl": 0.05, "sector": "반도체", "plan": None},
+                            {"code": "B", "name": "비", "weight": 0.3, "pnl": -0.02, "sector": "은행", "plan": None}],
+               "sectors": {"A": "반도체", "B": "은행", "C": "반도체"}, "last_view": None,
+               "agenda": ["10/08(목) 옵션 만기일"]}
+        f = {"close": 100.0, "r1": 0.01, "r5": 0.02, "r20": 0.03, "r60": 0.04, "vol20": 0.3, "ma20_gap": 0.01,
+             "ma60_gap": 0.02, "from_high": -0.1, "rsi14": 55.0, "volume_ratio": 1.1}
+        details = [{"code": c, "name": c, "f": f, "why": "", "news": [], "sector": "반도체"} for c in ("A", "B", "C")]
+        prompts, chat = self.fake_chat({"market_view": "v", "targets": [{"code": "C", "weight": 0.2, "reason": "r"},
+                                                                         {"code": "B", "weight": 0}]})
+        with mock.patch.object(brain, "chat_json", chat):
+            out = brain.decide(ctx, details)
+        user = prompts[0][1]
+        self.assertIn("주식 수 그대로 들고 가", user)
+        self.assertIn("[다가오는 일정]", user)
+        self.assertIn("반도체 20%", user)
+        self.assertNotIn("리그 현황", user)
+        self.assertEqual(out["keep"], ["A"])
+        self.assertEqual(out["targets"], {"C": 0.2})
 
 
 class PlanUnitTest(unittest.TestCase):
@@ -853,23 +1257,38 @@ class PlanUnitTest(unittest.TestCase):
     def test_migrate_and_default(self):
         self.assertEqual(planlib.migrate({"stop_pct": 0.1, "take_pct": None, "default": True}, 200), {"stop": 180.0, "default": True})
         plan = planlib.ensure_default({"stop": 180.0, "default": True}, avg=150)
-        self.assertEqual(plan["stop"], 135.0)          # 기본 손절은 평단을 따라간다
+        self.assertEqual(plan["stop"], 180.0)          # 물타기로 평단이 내려가도 손절가는 안 내려간다
+        plan = planlib.ensure_default({"stop": 90.0, "default": True, "default_pct": 0.1}, avg=120)
+        self.assertAlmostEqual(plan["stop"], 108.0)    # 더 사서 평단이 오르면 따라 오른다
         self.assertEqual(planlib.ensure_default({"stop": 170.0}, avg=150)["stop"], 170.0)
         self.assertNotIn("stop", planlib.ensure_default({"trail_pct": 0.1, "high": 150}, avg=150))
+        new = planlib.ensure_default({}, avg=100, pct=0.07)
+        self.assertEqual((new["stop"], new["default_pct"]), (93.0, 0.07))
+        old = planlib.ensure_default({"stop": 90.0, "default": True}, avg=100, pct=0.05)
+        self.assertEqual((old["stop"], old["default_pct"]), (90.0, 0.10))   # 예전에 걸린 건 폭을 안 바꾼다
+
+    def test_default_pct_follows_volatility(self):
+        self.assertEqual(planlib.default_pct(None), DEFAULT_STOP_PCT)
+        self.assertEqual(planlib.default_pct(0.01), 0.05)            # 하한
+        self.assertAlmostEqual(planlib.default_pct(0.03), 0.105)
+        self.assertEqual(planlib.default_pct(0.08), 0.15)            # 상한
 
 
 class BrainParsingTest(unittest.TestCase):
     def test_clean_actions(self):
-        out = brain.clean_actions([
+        out, notes = brain.clean_actions([
             {"code": "A", "target_weight": 20, "reason": "r"},
             {"code": "B", "stop_price": 90},
             {"code": "C"},                              # 아무것도 안 바꿈
-            {"code": "D", "target_weight": 0.01},       # 너무 작은 비중
+            {"code": "D", "target_weight": 0.01},       # 최소 비중의 절반도 안 됨: 0
+            {"code": "E", "target_weight": 0.02},       # 절반은 넘음: 최소 비중으로
+            {"code": "F", "target_weight": "많이"},      # 못 알아봄: 비중은 그대로
             {"code": "Z", "target_weight": 0.1},        # 목록에 없는 코드
             "garbage",
-        ], {"A", "B", "C", "D"})
-        self.assertEqual([(a["code"], a["weight"]) for a in out], [("A", 0.2), ("B", None)])
+        ], {"A", "B", "C", "D", "E", "F"})
+        self.assertEqual([(a["code"], a["weight"]) for a in out], [("A", 0.2), ("B", None), ("D", 0.0), ("E", 0.03)])
         self.assertEqual(out[1]["plan"], {"stop_price": 90.0})
+        self.assertEqual(len(notes), 4)                 # D, E, F, Z는 조용히 버리지 않고 이유를 남긴다
 
     def test_clean_alerts(self):
         raw = [

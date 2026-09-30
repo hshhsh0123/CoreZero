@@ -10,7 +10,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
 <style>
-/* 레이아웃: 스코어보드 한 장. 리그 탭 → 순위표 → 수익률 레이스 → AI의 한 수 → 보유 종목 → 매매 기록 → 지난 판단 → 규칙 */
+/* 레이아웃: 기기 폭을 보고 셋 중 하나로 그린다.
+   PC(1024px~)는 본문 + 오른쪽 실시간 칸(스크롤해도 따라온다), 태블릿은 한 줄로 쭉,
+   폰(~719px)은 아래 탭(순위·실시간·AI·보유)으로 한 칸씩. 테마는 자동·밝게·어둡게 */
 :root {
   --page: #f4f5f8;
   --surface: #fcfcfd;
@@ -21,28 +23,34 @@
   --grid: #e6e8ed;
   --axis: #c5cad3;
   --hair: rgba(15, 20, 25, 0.10);
+  --lift: rgba(15, 20, 25, 0.12);
   --up: #c62f2f;          /* 한국식: 오르면 빨강 */
   --down: #1c5cab;        /* 내리면 파랑 */
+  --warn: #9a5b00;        /* 상태색(주의). 선수 색과 따로 쓴다 */
+  --warn-bg: #fbf1df;
   --p-ai: #4a3aa7;
   --p-monkey: #eb6834;
   --p-hodl: #1baf7a;
   --shadow: 0 6px 20px rgba(15, 20, 25, 0.10);
+  --nav-h: 58px;
   --font-display: "Black Han Sans", "IBM Plex Sans KR", system-ui, sans-serif;
   --font-ui: "IBM Plex Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --page: #0e1116; --surface: #161a21; --surface-2: #212732; --ink: #eef1f5; --ink-2: #b4bcc8;
-    --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10);
-    --up: #ff7a7a; --down: #6da7ec; --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
+    --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10); --lift: rgba(0, 0, 0, 0.5);
+    --up: #ff7a7a; --down: #6da7ec; --warn: #f0b458; --warn-bg: #2b2416;
+    --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
     --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --page: #0e1116; --surface: #161a21; --surface-2: #212732; --ink: #eef1f5; --ink-2: #b4bcc8;
-  --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10);
-  --up: #ff7a7a; --down: #6da7ec; --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
+  --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10); --lift: rgba(0, 0, 0, 0.5);
+  --up: #ff7a7a; --down: #6da7ec; --warn: #f0b458; --warn-bg: #2b2416;
+  --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
   --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
@@ -54,24 +62,39 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 p { margin: 0; }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--ink-2); outline-offset: 2px; border-radius: 4px; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 20px; }
+:root[data-layout="desktop"] .wrap { max-width: 1320px; padding-inline: 28px; }
+:root[data-layout="phone"] .wrap { padding-block: 14px calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 28px); gap: 14px; }
 
+/* ---- 머리 ---- */
 .top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; }
 .brand { display: grid; gap: 8px; min-width: 0; max-width: 640px; }
 .wordmark { font-family: var(--font-display); font-weight: 400; font-size: clamp(30px, 6.4vw, 46px); line-height: 1.15; letter-spacing: -0.005em; }
 .wordmark .team { text-decoration: underline; text-decoration-thickness: 0.11em; text-underline-offset: 0.16em; }
 .wordmark .vs { font-size: 0.55em; color: var(--muted); padding-inline: 0.12em; vertical-align: 0.18em; }
 .tagline { color: var(--ink-2); max-width: 60ch; }
-.stamp { color: var(--muted); font-size: 13px; }
+.controls { display: grid; justify-items: end; gap: 8px; }
+.stamp { color: var(--muted); font-size: 13px; text-align: right; }
+:root[data-layout="phone"] .top { align-items: flex-start; }
+:root[data-layout="phone"] .wordmark { font-size: 29px; }
+:root[data-layout="phone"] .tagline { font-size: 13.5px; }
+:root[data-layout="phone"] .controls { justify-items: start; }
+:root[data-layout="phone"] .stamp { text-align: left; }
 
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hair); overflow-x: auto; }
-.tab { background: none; border: 0; padding: 10px 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
-.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
-.tab:hover { color: var(--ink); }
+/* 여러 개 중 하나 고르는 버튼 묶음 (테마, 리그, 선수) */
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-2); max-width: 100%; }
+.seg button { border: 0; background: none; padding: 6px 12px; border-radius: 8px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-selected="true"], .seg button[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px var(--lift); }
+.seg svg { width: 15px; height: 15px; flex: none; }
+.seg.market { justify-self: start; }
+.seg.market button { padding: 8px 18px; font-size: 14.5px; }
+:root[data-layout="phone"] .seg.market { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-self: stretch; }
 
 .panel { display: grid; gap: 20px; }
+:root[data-layout="phone"] .panel { gap: 14px; }
 .status { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; color: var(--ink-2); font-size: 13px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink); font-size: 12.5px; }
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
@@ -79,12 +102,23 @@ button { font: inherit; color: inherit; }
 
 .headline { font-size: clamp(18px, 3.2vw, 22px); font-weight: 600; line-height: 1.45; }
 .headline .soft { color: var(--ink-2); font-weight: 500; }
+.luck { color: var(--ink-2); font-size: 13.5px; max-width: 75ch; }
 
 .card { background: var(--surface); border: 1px solid var(--hair); border-radius: 12px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+:root[data-layout="phone"] .card { padding: 16px; gap: 14px; }
 .card-head { display: grid; gap: 4px; }
+.card-head.row2 { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .card-head h2 { font-size: 17px; font-weight: 700; }
 .sub { color: var(--muted); font-size: 13px; }
 
+/* ---- PC: 본문 + 오른쪽 실시간 칸 ---- */
+.board { display: grid; gap: 20px; }
+.mainc, .aside { display: grid; gap: 20px; align-content: start; min-width: 0; }
+:root[data-layout="desktop"] .board { grid-template-columns: minmax(0, 1fr) minmax(320px, 390px); align-items: start; }
+:root[data-layout="desktop"] .aside { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); max-height: calc(100vh - 32px); grid-template-rows: auto minmax(0, 1fr); }
+:root[data-layout="desktop"] .aside .feed-card { overflow-y: auto; overscroll-behavior: contain; align-content: start; }
+
+/* ---- 순위 ---- */
 .standings { list-style: none; margin: 0; padding: 0; display: grid; }
 .row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 150px 150px 120px 64px; gap: 12px; align-items: center; padding: 14px 12px; border-top: 1px solid var(--hair); }
 .row:first-child { border-top: 0; }
@@ -103,6 +137,7 @@ button { font: inherit; color: inherit; }
 .delta.down { color: var(--down); }
 .delta.flat { color: var(--muted); }
 
+/* ---- 차트 ---- */
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 16px; height: 2px; border-radius: 1px; background: var(--c); }
@@ -112,7 +147,7 @@ button { font: inherit; color: inherit; }
 .tick { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .endlabel { font-size: 12px; fill: var(--ink-2); }
 .endlabel .v { fill: var(--ink); font-weight: 600; }
-.empty { display: grid; gap: 4px; place-content: center; text-align: center; min-height: 180px; padding: 16px; border: 1px dashed var(--axis); border-radius: 10px; color: var(--ink-2); }
+.empty { display: grid; gap: 4px; place-content: center; text-align: center; min-height: 160px; padding: 16px; border: 1px dashed var(--axis); border-radius: 10px; color: var(--ink-2); }
 .empty strong { color: var(--ink); }
 
 details > summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; font-weight: 600; width: fit-content; }
@@ -125,6 +160,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .side.buy { color: var(--up); font-weight: 600; }
 .side.sell { color: var(--down); font-weight: 600; }
 
+/* ---- AI의 한 수 ---- */
 .view { border-left: 3px solid var(--p-ai); padding: 2px 0 2px 14px; color: var(--ink); font-size: 15.5px; max-width: 70ch; }
 .picks { list-style: none; margin: 0; padding: 0; display: grid; }
 .pick { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 4px 20px; padding: 14px 0; border-top: 1px solid var(--hair); }
@@ -142,7 +178,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .shortlist { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
 .shortlist b { color: var(--ink); font-weight: 600; }
 .error { color: var(--up); }
+.notes { display: grid; gap: 4px; margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
 
+/* ---- 보유 종목 ---- */
 .holdings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .hcol { display: grid; align-content: start; gap: 10px; min-width: 0; }
 .hhead { display: flex; align-items: center; gap: 8px; font-weight: 700; }
@@ -151,8 +189,27 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .hitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; padding: 8px 0; border-top: 1px solid var(--hair); font-size: 14px; }
 .hitem .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hitem .w { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
-.hitem .d { grid-column: 1 / -1; display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.hitem .d { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.hitem .p { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .hnote { color: var(--muted); font-size: 13px; }
+.sectors { display: grid; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.sectors .cap-k { color: var(--muted); font-size: 12px; }
+.sec { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; align-items: center; font-size: 12.5px; }
+.sec .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.sec .pv { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+.sec .bar { grid-column: 1 / -1; position: relative; height: 6px; border-radius: 3px; background: var(--surface); }
+.sec .bar > span { display: block; height: 100%; border-radius: 3px; background: var(--p-ai); }
+.sec .bar > i { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--ink-2); }
+.sec.over .nm, .sec.over .pv { color: var(--warn); }
+.sec.over .bar > span { background: var(--warn); }
+
+/* ---- 매매 기록 (폰은 목록) ---- */
+.tlist { list-style: none; margin: 0; padding: 0; display: grid; }
+.tlist li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--hair); font-size: 14px; }
+.tlist li:first-child { border-top: 0; }
+.tlist .tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tlist .tmeta { grid-column: 2 / -1; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.tlist .twho { color: var(--ink-2); font-size: 12.5px; }
 
 .entries { display: grid; gap: 8px; }
 .entry { border-top: 1px solid var(--hair); padding-top: 10px; }
@@ -163,7 +220,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .foot ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 80ch; }
 .foot .disclaimer { color: var(--muted); }
 
-.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); border: 1px solid var(--hair); border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 13px; min-width: 190px; display: grid; gap: 6px; }
+.tip { position: fixed; z-index: 30; pointer-events: none; background: var(--surface); border: 1px solid var(--hair); border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 13px; min-width: 190px; display: grid; gap: 6px; }
 .tip .t-date { color: var(--muted); font-size: 12px; }
 .tip .t-row { display: grid; grid-template-columns: 14px auto 1fr; gap: 8px; align-items: center; }
 .tip .t-row i { width: 14px; height: 2px; border-radius: 1px; background: var(--c); }
@@ -173,42 +230,66 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* ---- 실시간 ---- */
 .rt-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--ink-2); font-size: 13px; }
 .chip.on::before { background: var(--up); animation: pulse 1.6s ease-in-out infinite; }
-.chip.warn::before { background: var(--p-monkey); }
+.chip.warn::before { background: var(--warn); }
 .chip.think::before { background: var(--p-ai); animation: pulse 0.9s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.25; } }
+.notice { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--ink); font-size: 13.5px; }
+.notice b { color: var(--warn); }
+.notice ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
 .feed { list-style: none; margin: 0; padding: 0; display: grid; }
 .fitem { display: grid; grid-template-columns: 62px 96px minmax(0, 1fr); gap: 4px 10px; padding: 10px 0; border-top: 1px solid var(--hair); font-size: 14px; align-items: baseline; }
 .fitem:first-child { border-top: 0; padding-top: 2px; }
+.aside .fitem, :root[data-layout="phone"] .fitem { grid-template-columns: auto minmax(0, 1fr); }
+.aside .fitem .ftext, .aside .fitem details, :root[data-layout="phone"] .fitem .ftext, :root[data-layout="phone"] .fitem details { grid-column: 1 / -1; }
 .ftime { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
 .badge b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; background: var(--surface-2); color: var(--ink); font-size: 11px; line-height: 1; }
 .badge.react b { background: var(--p-ai); color: var(--surface); }
-.badge.stop b, .badge.take b { background: var(--ink); color: var(--surface); }
+.badge.stop b, .badge.take b, .badge.trail b { background: var(--ink); color: var(--surface); }
 .badge.error b { background: var(--up); color: var(--surface); }
 .ftext { min-width: 0; overflow-wrap: anywhere; }
 .fitem.quiet .ftext { color: var(--ink-2); }
 .fitem details { grid-column: 3; }
 .fitem details > summary { width: auto; font-weight: 500; color: var(--ink); }
-.fbody { display: grid; gap: 8px; margin-top: 8px; color: var(--ink-2); font-size: 13.5px; }
+.fbody { display: grid; gap: 10px; color: var(--ink-2); font-size: 13.5px; }
+.fitem .fbody { margin-top: 8px; gap: 8px; }
 .fbody ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.fbody b { color: var(--ink); }
 .fbody .from-to { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
 .feed-tools { display: flex; align-items: center; gap: 12px; }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--ink-2); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .linkbtn:hover { color: var(--ink); }
-.hitem .p { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
-@media (max-width: 860px) {
-  .fitem { grid-template-columns: 62px minmax(0, 1fr); }
-  .fitem .ftext, .fitem details { grid-column: 1 / -1; }
-  .row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "rank who ret" ". eq today" ". trades trades"; row-gap: 8px; }
+/* ---- 폰: 아래 탭 ---- */
+.bottomnav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--surface); border-top: 1px solid var(--hair); box-shadow: 0 -4px 16px var(--lift); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.bottomnav button { position: relative; height: var(--nav-h); border: 0; background: none; display: grid; place-content: center; justify-items: center; gap: 2px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.bottomnav button svg { width: 22px; height: 22px; }
+.bottomnav button[aria-selected="true"] { color: var(--ink); }
+.bottomnav button[aria-selected="true"]::before { content: ""; position: absolute; top: 0; left: 32%; right: 32%; height: 3px; border-radius: 0 0 3px 3px; background: var(--ink); }
+.bottomnav .dot { position: absolute; top: 9px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 2px var(--surface); animation: pulse 1.6s ease-in-out infinite; }
+
+/* 카드 폭에 맞춰 바뀌는 부분 (PC 본문 칸이 좁을 때도, 태블릿·폰에서도 같은 규칙).
+   위의 기본 규칙을 덮어써야 해서 맨 끝에 둔다 */
+.cq { container-type: inline-size; }
+@container (max-width: 760px) {
+  .row { grid-template-columns: 34px minmax(0, 1fr) auto 104px 96px; }
+  .ret { font-size: 22px; }
+  .row .stat.trades { display: none; }
+}
+@container (max-width: 600px) {
+  .row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "rank who ret" ". eq today"; row-gap: 8px; padding: 12px 8px; }
   .rank { grid-area: rank; }
   .who { grid-area: who; }
-  .ret { grid-area: ret; text-align: right; font-size: 22px; }
+  .ret { grid-area: ret; text-align: right; font-size: 21px; }
   .row .stat.eq { grid-area: eq; }
   .row .stat.today { grid-area: today; text-align: right; }
-  .row .stat.trades { grid-area: trades; display: none; }
-  .holdings { grid-template-columns: minmax(0, 1fr); }
   .pick { grid-template-columns: minmax(0, 1fr); }
+  .holdings { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 420px) {
+  .blurb { display: none; }
+  .name { font-size: 15px; }
+  .ret { font-size: 19px; }
 }
 </style>
 
@@ -218,19 +299,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
       <h1 class="wordmark"><span class="team" style="text-decoration-color: var(--p-ai)">AI</span><span class="vs">vs</span><span class="team" style="text-decoration-color: var(--p-monkey)">원숭이</span><span class="vs">vs</span><span class="team" style="text-decoration-color: var(--p-hodl)">존버</span></h1>
       <p class="tagline">DeepSeek이 직접 고른 종목으로 가짜 돈을 굴려요. 랜덤으로 찍는 원숭이, 지수만 사서 들고 있는 존버를 이길 수 있을까요?</p>
     </div>
-    <p class="stamp" id="stamp"></p>
+    <div class="controls" id="controls">
+      <p class="stamp" id="stamp"></p>
+    </div>
   </header>
-  <nav class="tabs" role="tablist" id="tabs" aria-label="시장"></nav>
+  <nav class="seg market" role="tablist" id="tabs" aria-label="리그"></nav>
   <main id="panels"></main>
   <footer class="foot card" id="rules"></footer>
 </div>
+<nav class="bottomnav" id="bottomnav" role="tablist" aria-label="보기" hidden></nav>
 <div class="tip" id="tip" hidden></div>
 
 <script>
-let DATA = {"generated_at": "2026-09-30T07:55:37.153974+00:00", "live_mode": false, "markets": [{"key": "kr", "name": "한국", "currency": "KRW", "capital": 100000000.0, "benchmark": "KODEX 200", "fee": 0.00015, "sell_tax": 0.002, "slippage": 0.0005, "tz": "Asia/Seoul", "open": "09:00", "close": "15:30", "universe": 110, "started": "2026-09-30", "last_decided": "2026-09-30", "updated_at": "2026-09-30T06:56:14.651146+00:00", "sessions": 0, "live": {"date": null, "provisional": false}, "pending": {"decided_on": "2026-09-30", "who": ["AI (DeepSeek)", "원숭이", "존버"]}, "players": [{"key": "ai", "label": "AI (DeepSeek)", "equity": 100000000.0, "ret": 0.0, "today": 0.0, "cash": 100000000.0, "history": [{"date": "2026-09-30", "equity": 100000000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}, {"key": "monkey", "label": "원숭이", "equity": 100000000.0, "ret": 0.0, "today": 0.0, "cash": 100000000.0, "history": [{"date": "2026-09-30", "equity": 100000000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}, {"key": "hodl", "label": "존버", "equity": 100000000.0, "ret": 0.0, "today": 0.0, "cash": 100000000.0, "history": [{"date": "2026-09-30", "equity": 100000000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}], "alerts": [], "next_check_at": null, "followups": [], "journal": [{"date": "2026-09-30", "decided_at": "2026-09-30T06:56:14.651146+00:00", "scout_view": "시장은 반도체 장비·에너지 강세, 자동차·조선·바이오 일부 과매도 구간으로 차별화가 뚜렷합니다. 단기 모멘텀과 과매도 반등 기회를 함께 고려해 후보를 추렸습니다.", "shortlist": [{"code": "005930", "why": "시가총액 1위, 최근 조정 후 20일선 위, 반도체 업황 회복 가능성 점검 필요", "name": "삼성전자"}, {"code": "000660", "why": "HBM 등 AI 메모리 수요 기대, 최근 5일 -5.5% 조정, RSI 중립 구간", "name": "SK하이닉스"}, {"code": "005380", "why": "RSI 17 과매도, 20일 -14.5%, 저가 매수 기회인지 뉴스 확인 필요", "name": "현대차"}, {"code": "000270", "why": "RSI 17 과매도, 최근 급락, 펀더멘털 훼손 여부 확인 필요", "name": "기아"}, {"code": "012330", "why": "RSI 10 극단적 과매도, 20일 -19.1%, 기술적 반등 가능성", "name": "현대모비스"}, {"code": "373220", "why": "2차전지 대장주, 20일 -5.6% 조정, 전기차 수요 회복 신호 확인", "name": "LG에너지솔루션"}, {"code": "096770", "why": "60일 +58.1%, 에너지/정유 강세 지속 여부, RSI 56 아직 과열 아님", "name": "SK이노베이션"}, {"code": "009830", "why": "5일 +21.9%, 거래량비 1.98, 태양광/수소 모멘텀 급등, 추격 매수 가능성 점검", "name": "한화솔루션"}, {"code": "036930", "why": "반도체 장비, 20일 +31.4%, RSI 69, 실적 개선 지속 여부", "name": "주성엔지니어링"}, {"code": "403870", "why": "반도체 장비, 20일 +26.9%, RSI 71, 고평가 여부 확인 필요", "name": "HPSP"}, {"code": "267260", "why": "전력기기, 20일 -15.2%, RSI 28 과매도, 수주 잔고 등 펀더멘털 확인", "name": "HD현대일렉트릭"}, {"code": "042660", "why": "조선, RSI 28, 20일 -10.5%, 수주 모멘텀 둔화 여부 뉴스 확인", "name": "한화오션"}, {"code": "028300", "why": "바이오, 5일 +29.8%, RSI 75, 급등 배경(신약 승인 등) 확인 필요", "name": "HLB"}, {"code": "196170", "why": "바이오, RSI 27 과매도, 20일 -17.2%, 기술이전 등 이슈 확인", "name": "알테오젠"}, {"code": "298380", "why": "RSI 7 극단 과매도, 20일 -33.3%, 급락 원인과 반등 가능성 뉴스 확인", "name": "에이비엘바이오"}], "market_view": "코스피는 외인·기관 동반 매도로 약보합 흐름이나, 반도체 HBM 기대와 에너지 강세, 일부 과매도 종목의 반등 가능성이 혼재된 분산 접근이 유리해 보인다.", "targets": [{"code": "005930", "name": "삼성전자", "weight": 0.15, "reason": "대형 반도체 대표주로 최근 조정 후 20일선 위에 있고, HBM 등 메모리 업황 회복 기대가 있어 안정적 비중으로 편입.", "plan": {"stop_pct": 0.07, "take_pct": 0.15, "trail_pct": 0.05, "take_frac": 0.5}}, {"code": "000660", "name": "SK하이닉스", "weight": 0.1, "reason": "AI 메모리 수요와 내년 HBM 가격 상승 전망으로 조정 구간에서 저가 매수 기회로 판단.", "plan": {"stop_pct": 0.1, "take_pct": 0.15, "trail_pct": 0.08, "take_frac": 0.5}}, {"code": "005380", "name": "현대차", "weight": 0.1, "reason": "RSI 17 과매도 구간에 진입했고 미국 투자 등 호재가 있어 기술적 반등 가능성에 베팅.", "plan": {"stop_pct": 0.1, "take_pct": 0.12, "trail_pct": 0.06, "take_frac": 1.0}}, {"code": "000270", "name": "기아", "weight": 0.1, "reason": "RSI 17 과매도, PBR 0.68배, 배당수익률 6%로 저평가 매력이 커 반등 시 수익 기대.", "plan": {"stop_pct": 0.1, "take_pct": 0.12, "take_frac": 1.0}}, {"code": "096770", "name": "SK이노베이션", "weight": 0.1, "reason": "에너지·LNG 모멘텀이 강하고 60일 +58%의 추세가 유지되고 있어 추세 추종 전략으로 편입.", "plan": {"stop_pct": 0.08, "take_pct": 0.15, "trail_pct": 0.06, "take_frac": 0.5}}, {"code": "267260", "name": "HD현대일렉트릭", "weight": 0.08, "reason": "전력기기 업종의 장기 성장성 대비 최근 과매도로 RSI 28까지 하락해 반등 여력이 있다고 판단.", "plan": {"stop_pct": 0.1, "take_pct": 0.15, "take_frac": 1.0}}, {"code": "012330", "name": "현대모비스", "weight": 0.07, "reason": "RSI 10 극단적 과매도 상태로 단기 반발 매수세 유입 가능성이 높아 소량 편입.", "plan": {"stop_pct": 0.12, "take_pct": 0.15, "take_frac": 1.0}}, {"code": "036930", "name": "주성엔지니어링", "weight": 0.05, "reason": "반도체 장비주 강세 흐름에 올라타되 RSI 69로 과열 부담이 있어 소량만 편입.", "plan": {"stop_pct": 0.1, "take_pct": 0.2, "take_frac": 0.5}}, {"code": "403870", "name": "HPSP", "weight": 0.05, "reason": "반도체 장비 모멘텀이 유효하나 고평가 논란이 있어 분할매도 계획과 함께 소규모 투자.", "plan": {"stop_pct": 0.12, "take_pct": 0.15, "take_frac": 0.5}}, {"code": "196170", "name": "알테오젠", "weight": 0.05, "reason": "RSI 27 과매도 바이오 종목으로 기술이전 등 이벤트 발생 시 급반등 가능성에 소량 대응.", "plan": {"stop_pct": 0.1, "take_pct": 0.2, "take_frac": 0.5}}], "cash_reason": "시장이 외인·기관 매도로 약세를 보이고 있어 추가 하락에 대비해 현금 15%를 유지하며, 반등 시 추가 매수 여력으로 활용한다.", "model": "deepseek-v4-pro", "usage": {"scout": {"prompt_tokens": 8505, "completion_tokens": 3711, "total_tokens": 12216, "prompt_tokens_details": {"cached_tokens": 256}, "completion_tokens_details": {"reasoning_tokens": 2970}, "prompt_cache_hit_tokens": 256, "prompt_cache_miss_tokens": 8249}, "decide": {"prompt_tokens": 7668, "completion_tokens": 3712, "total_tokens": 11380, "prompt_tokens_details": {"cached_tokens": 256}, "completion_tokens_details": {"reasoning_tokens": 2581}, "prompt_cache_hit_tokens": 256, "prompt_cache_miss_tokens": 7412}}, "monkey": ["삼성증권", "현대건설", "한국전력", "HD현대", "크래프톤"]}], "rt": null}, {"key": "us", "name": "미국", "currency": "USD", "capital": 100000.0, "benchmark": "SPY (S&P 500)", "fee": 0.0007, "sell_tax": 0.0, "slippage": 0.0003, "tz": "America/New_York", "open": "09:30", "close": "16:00", "universe": 120, "started": "2026-09-29", "last_decided": "2026-09-29", "updated_at": "2026-09-30T06:58:25.133435+00:00", "sessions": 0, "live": {"date": null, "provisional": false}, "pending": {"decided_on": "2026-09-29", "who": ["AI (DeepSeek)", "원숭이", "존버"]}, "players": [{"key": "ai", "label": "AI (DeepSeek)", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}, {"key": "monkey", "label": "원숭이", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}, {"key": "hodl", "label": "존버", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}], "alerts": [], "next_check_at": null, "followups": [], "journal": [{"date": "2026-09-29", "decided_at": "2026-09-30T06:58:25.133435+00:00", "scout_view": "시장은 반도체·AI 관련 기술주 중심으로 강세를 보이고, 금융·소비재·통신 섹터는 상대적으로 약세다. 단기적으로 반도체 및 일부 소프트웨어 종목의 모멘텀이 뚜렷해 이들 중심으로 후보를 추렸다.", "shortlist": [{"code": "NVDA.O", "why": "반도체 대장주로 20일 +2.9%, 60일 +16.2%의 안정적 상승 추세, RSI 54로 과열 부담 적음", "name": "엔비디아"}, {"code": "AMD.O", "why": "20일 +29.1%의 강한 모멘텀, 20일선 대비 +12.1%, 고점 대비 -3.7%로 추가 상승 여력", "name": "AMD(어드밴스드 마이크로 디바이시스)"}, {"code": "TSM", "why": "반도체 파운드리 선두, 20일 +10.0% 상승, 변동성 26%로 안정적, RSI 62", "name": "TSMC ADR"}, {"code": "ASML.O", "why": "반도체 장비 핵심, 5일 +4.9%, 20일 +8.2%로 단기·중기 모두 강세, RSI 61", "name": "ASML 홀딩 ADR"}, {"code": "AMAT.O", "why": "반도체 장비, 5일 +8.4%, 20일 +11.7%로 강한 상승, RSI 64, 고점 대비 -29.2%로 회복 여지", "name": "어플라이드 머티어리얼즈"}, {"code": "MRVL.O", "why": "반도체 설계, 20일 +24.4%의 급등, 20일선 대비 +11.0%, RSI 63", "name": "마벨 테크놀로지 그룹"}, {"code": "MU.O", "why": "메모리 반도체, 20일 +11.1%, 60일 +8.2%로 업황 개선 기대, RSI 55", "name": "마이크론 테크놀로지"}, {"code": "META.O", "why": "20일 +29.1%의 강한 모멘텀, RSI 66, 고점 대비 -5.0%로 AI·광고 성장 기대", "name": "메타"}, {"code": "CRWD.O", "why": "사이버보안, 20일 +13.7%, 60일 +31.8%로 강세, 최고가 부근, RSI 78로 과열 가능", "name": "크라우드 스트라이크 홀딩스"}, {"code": "DDOG.O", "why": "소프트웨어, 20일 +13.3%, 5일 +8.5%의 강한 상승, RSI 84로 과매수 구간", "name": "데이터도그"}, {"code": "PLTR.O", "why": "60일 +41.1%의 장기 상승, RSI 73으로 과열이나 조정 후 재상승 가능성", "name": "팔란티어 테크놀로지스"}, {"code": "TMO", "why": "의료장비, 20일 +10.1%, 60일 +31.3%로 강한 모멘텀, RSI 87로 단기 과열", "name": "써모 피셔 사이언티픽"}, {"code": "LLY", "why": "제약 대장주, 20일 +2.4%, RSI 75, 변동성 17%로 방어적 성격", "name": "일라이 릴리"}, {"code": "DELL.K", "why": "AI 서버 수혜, 20일 +18.3%, 60일 +31.0%, RSI 51로 중립적", "name": "델테크놀로지"}, {"code": "INTC.O", "why": "20일 +29.5%의 이례적 급등, RSI 58, 변동성 75%로 뉴스 확인 필요", "name": "인텔"}], "market_view": "채권 금리 상승 부담 속에서도 AI·반도체 모멘텀이 강하나, 과열 종목은 피하고 현금을 일부 보유해 변동성에 대비한다.", "targets": [{"code": "NVDA.O", "name": "엔비디아", "weight": 0.12, "reason": "AI 대장주로 상대적으로 안정적, RSI 54로 과열 부담 없음", "plan": {"stop_pct": 0.08, "take_pct": 0.15, "trail_pct": 0.08, "take_frac": 0.5}}, {"code": "TSM", "name": "TSMC ADR", "weight": 0.12, "reason": "파운드리 선두, 안정적 변동성 26%, RSI 62", "plan": {"stop_pct": 0.1, "take_pct": 0.2, "trail_pct": 0.08, "take_frac": 0.5}}, {"code": "AMD.O", "name": "AMD(어드밴스드 마이크로 디바이시스)", "weight": 0.1, "reason": "20일 +29%의 강한 모멘텀, AI 인프라 기대", "plan": {"stop_pct": 0.12, "take_pct": 0.25, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "ASML.O", "name": "ASML 홀딩 ADR", "weight": 0.1, "reason": "반도체 장비 핵심, 최근 5일 +4.9% 강세", "plan": {"stop_pct": 0.12, "take_pct": 0.2, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "META.O", "name": "메타", "weight": 0.1, "reason": "AI·광고 성장 기대로 20일 +29.1%, RSI 66", "plan": {"stop_pct": 0.12, "take_pct": 0.2, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "AMAT.O", "name": "어플라이드 머티어리얼즈", "weight": 0.08, "reason": "장비주, 20일 +11.7%, 고점 대비 회복 여지", "plan": {"stop_pct": 0.12, "take_pct": 0.25, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "MRVL.O", "name": "마벨 테크놀로지 그룹", "weight": 0.08, "reason": "AI 반도체 설계, 20일 +24.4% 급등", "plan": {"stop_pct": 0.15, "take_pct": 0.3, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "MU.O", "name": "마이크론 테크놀로지", "weight": 0.05, "reason": "메모리 반도체, RSI 55로 조정 후 재상승 기대", "plan": {"stop_pct": 0.15, "take_pct": 0.25, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "DELL.K", "name": "델테크놀로지", "weight": 0.05, "reason": "AI 서버 수혜, RSI 51 중립, 60일 +31%", "plan": {"stop_pct": 0.15, "take_pct": 0.3, "trail_pct": 0.1, "take_frac": 0.5}}], "cash_reason": "채권 금리 상승과 일부 종목 과열에 대비해 현금 20%를 보유하고, 조정 시 추가 매수 여력을 확보한다.", "model": "deepseek-v4-pro", "usage": {"scout": {"prompt_tokens": 9942, "completion_tokens": 6414, "total_tokens": 16356, "prompt_tokens_details": {"cached_tokens": 9856}, "completion_tokens_details": {"reasoning_tokens": 5556}, "prompt_cache_hit_tokens": 9856, "prompt_cache_miss_tokens": 86}, "decide": {"prompt_tokens": 7185, "completion_tokens": 6074, "total_tokens": 13259, "prompt_tokens_details": {"cached_tokens": 384}, "completion_tokens_details": {"reasoning_tokens": 5125}, "prompt_cache_hit_tokens": 384, "prompt_cache_miss_tokens": 6801}}, "monkey": ["버라이존", "코스트코 홀세일", "웰타워", "어플라이드 머티어리얼즈", "린드"]}], "rt": null}], "rules": {"model": "deepseek-v4-pro", "model_react": "deepseek-v4-pro", "model_triage": "deepseek-flash", "max_positions": 10, "min_weight": 0.03, "max_weight": 0.3, "monkey_picks": 5, "monkey_every": 5, "poll_seconds": 20, "news_seconds": 120, "heartbeat_min": 90, "max_reviews": 20, "max_triages": 80, "news_confirm_min": 15, "news_min_stop_gap": 0.02}};
+let DATA = {"generated_at": "2026-09-30T09:03:21.587451+00:00", "live_mode": false, "markets": [{"key": "kr", "name": "한국", "currency": "KRW", "capital": 100000000.0, "benchmark": "KODEX 200", "fee": 0.00015, "sell_tax": 0.002, "slippage": 0.0005, "tz": "Asia/Seoul", "open": "09:00", "close": "15:30", "universe": 110, "started": "2026-09-30", "last_decided": "2026-09-30", "updated_at": "2026-09-30T06:56:14.651146+00:00", "sessions": 0, "live": {"date": null, "provisional": false}, "pending": {"decided_on": "2026-09-30", "who": ["AI (DeepSeek)", "원숭이", "존버"]}, "players": [{"key": "ai", "label": "AI (DeepSeek)", "equity": 100000000.0, "ret": 0.0, "today": 0.0, "cash": 100000000.0, "history": [{"date": "2026-09-30", "equity": 100000000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "dividends": 0.0, "price_dates": {}}, {"key": "monkey", "label": "원숭이", "equity": 100000000.0, "ret": 0.0, "today": 0.0, "cash": 100000000.0, "history": [{"date": "2026-09-30", "equity": 100000000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "dividends": 0.0, "price_dates": {}}, {"key": "hodl", "label": "존버", "equity": 100000000.0, "ret": 0.0, "today": 0.0, "cash": 100000000.0, "history": [{"date": "2026-09-30", "equity": 100000000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "dividends": 0.0, "price_dates": {}}], "alerts": [], "next_check_at": null, "followups": [], "limits": null, "agenda": [], "corp_actions": [], "journal": [{"date": "2026-09-30", "decided_at": "2026-09-30T06:56:14.651146+00:00", "scout_view": "시장은 반도체 장비·에너지 강세, 자동차·조선·바이오 일부 과매도 구간으로 차별화가 뚜렷합니다. 단기 모멘텀과 과매도 반등 기회를 함께 고려해 후보를 추렸습니다.", "shortlist": [{"code": "005930", "why": "시가총액 1위, 최근 조정 후 20일선 위, 반도체 업황 회복 가능성 점검 필요", "name": "삼성전자"}, {"code": "000660", "why": "HBM 등 AI 메모리 수요 기대, 최근 5일 -5.5% 조정, RSI 중립 구간", "name": "SK하이닉스"}, {"code": "005380", "why": "RSI 17 과매도, 20일 -14.5%, 저가 매수 기회인지 뉴스 확인 필요", "name": "현대차"}, {"code": "000270", "why": "RSI 17 과매도, 최근 급락, 펀더멘털 훼손 여부 확인 필요", "name": "기아"}, {"code": "012330", "why": "RSI 10 극단적 과매도, 20일 -19.1%, 기술적 반등 가능성", "name": "현대모비스"}, {"code": "373220", "why": "2차전지 대장주, 20일 -5.6% 조정, 전기차 수요 회복 신호 확인", "name": "LG에너지솔루션"}, {"code": "096770", "why": "60일 +58.1%, 에너지/정유 강세 지속 여부, RSI 56 아직 과열 아님", "name": "SK이노베이션"}, {"code": "009830", "why": "5일 +21.9%, 거래량비 1.98, 태양광/수소 모멘텀 급등, 추격 매수 가능성 점검", "name": "한화솔루션"}, {"code": "036930", "why": "반도체 장비, 20일 +31.4%, RSI 69, 실적 개선 지속 여부", "name": "주성엔지니어링"}, {"code": "403870", "why": "반도체 장비, 20일 +26.9%, RSI 71, 고평가 여부 확인 필요", "name": "HPSP"}, {"code": "267260", "why": "전력기기, 20일 -15.2%, RSI 28 과매도, 수주 잔고 등 펀더멘털 확인", "name": "HD현대일렉트릭"}, {"code": "042660", "why": "조선, RSI 28, 20일 -10.5%, 수주 모멘텀 둔화 여부 뉴스 확인", "name": "한화오션"}, {"code": "028300", "why": "바이오, 5일 +29.8%, RSI 75, 급등 배경(신약 승인 등) 확인 필요", "name": "HLB"}, {"code": "196170", "why": "바이오, RSI 27 과매도, 20일 -17.2%, 기술이전 등 이슈 확인", "name": "알테오젠"}, {"code": "298380", "why": "RSI 7 극단 과매도, 20일 -33.3%, 급락 원인과 반등 가능성 뉴스 확인", "name": "에이비엘바이오"}], "market_view": "코스피는 외인·기관 동반 매도로 약보합 흐름이나, 반도체 HBM 기대와 에너지 강세, 일부 과매도 종목의 반등 가능성이 혼재된 분산 접근이 유리해 보인다.", "targets": [{"code": "005930", "name": "삼성전자", "weight": 0.15, "reason": "대형 반도체 대표주로 최근 조정 후 20일선 위에 있고, HBM 등 메모리 업황 회복 기대가 있어 안정적 비중으로 편입.", "plan": {"stop_pct": 0.07, "take_pct": 0.15, "trail_pct": 0.05, "take_frac": 0.5}}, {"code": "000660", "name": "SK하이닉스", "weight": 0.1, "reason": "AI 메모리 수요와 내년 HBM 가격 상승 전망으로 조정 구간에서 저가 매수 기회로 판단.", "plan": {"stop_pct": 0.1, "take_pct": 0.15, "trail_pct": 0.08, "take_frac": 0.5}}, {"code": "005380", "name": "현대차", "weight": 0.1, "reason": "RSI 17 과매도 구간에 진입했고 미국 투자 등 호재가 있어 기술적 반등 가능성에 베팅.", "plan": {"stop_pct": 0.1, "take_pct": 0.12, "trail_pct": 0.06, "take_frac": 1.0}}, {"code": "000270", "name": "기아", "weight": 0.1, "reason": "RSI 17 과매도, PBR 0.68배, 배당수익률 6%로 저평가 매력이 커 반등 시 수익 기대.", "plan": {"stop_pct": 0.1, "take_pct": 0.12, "take_frac": 1.0}}, {"code": "096770", "name": "SK이노베이션", "weight": 0.1, "reason": "에너지·LNG 모멘텀이 강하고 60일 +58%의 추세가 유지되고 있어 추세 추종 전략으로 편입.", "plan": {"stop_pct": 0.08, "take_pct": 0.15, "trail_pct": 0.06, "take_frac": 0.5}}, {"code": "267260", "name": "HD현대일렉트릭", "weight": 0.08, "reason": "전력기기 업종의 장기 성장성 대비 최근 과매도로 RSI 28까지 하락해 반등 여력이 있다고 판단.", "plan": {"stop_pct": 0.1, "take_pct": 0.15, "take_frac": 1.0}}, {"code": "012330", "name": "현대모비스", "weight": 0.07, "reason": "RSI 10 극단적 과매도 상태로 단기 반발 매수세 유입 가능성이 높아 소량 편입.", "plan": {"stop_pct": 0.12, "take_pct": 0.15, "take_frac": 1.0}}, {"code": "036930", "name": "주성엔지니어링", "weight": 0.05, "reason": "반도체 장비주 강세 흐름에 올라타되 RSI 69로 과열 부담이 있어 소량만 편입.", "plan": {"stop_pct": 0.1, "take_pct": 0.2, "take_frac": 0.5}}, {"code": "403870", "name": "HPSP", "weight": 0.05, "reason": "반도체 장비 모멘텀이 유효하나 고평가 논란이 있어 분할매도 계획과 함께 소규모 투자.", "plan": {"stop_pct": 0.12, "take_pct": 0.15, "take_frac": 0.5}}, {"code": "196170", "name": "알테오젠", "weight": 0.05, "reason": "RSI 27 과매도 바이오 종목으로 기술이전 등 이벤트 발생 시 급반등 가능성에 소량 대응.", "plan": {"stop_pct": 0.1, "take_pct": 0.2, "take_frac": 0.5}}], "cash_reason": "시장이 외인·기관 매도로 약세를 보이고 있어 추가 하락에 대비해 현금 15%를 유지하며, 반등 시 추가 매수 여력으로 활용한다.", "model": "deepseek-v4-pro", "usage": {"scout": {"prompt_tokens": 8505, "completion_tokens": 3711, "total_tokens": 12216, "prompt_tokens_details": {"cached_tokens": 256}, "completion_tokens_details": {"reasoning_tokens": 2970}, "prompt_cache_hit_tokens": 256, "prompt_cache_miss_tokens": 8249}, "decide": {"prompt_tokens": 7668, "completion_tokens": 3712, "total_tokens": 11380, "prompt_tokens_details": {"cached_tokens": 256}, "completion_tokens_details": {"reasoning_tokens": 2581}, "prompt_cache_hit_tokens": 256, "prompt_cache_miss_tokens": 7412}}, "monkey": ["삼성증권", "현대건설", "한국전력", "HD현대", "크래프톤"]}], "rt": null}, {"key": "us", "name": "미국", "currency": "USD", "capital": 100000.0, "benchmark": "SPY (S&P 500)", "fee": 0.0007, "sell_tax": 0.0, "slippage": 0.0003, "tz": "America/New_York", "open": "09:30", "close": "16:00", "universe": 120, "started": "2026-09-29", "last_decided": "2026-09-29", "updated_at": "2026-09-30T06:58:25.133435+00:00", "sessions": 0, "live": {"date": null, "provisional": false}, "pending": {"decided_on": "2026-09-29", "who": ["AI (DeepSeek)", "원숭이", "존버"]}, "players": [{"key": "ai", "label": "AI (DeepSeek)", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "dividends": 0.0, "price_dates": {}}, {"key": "monkey", "label": "원숭이", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "dividends": 0.0, "price_dates": {}}, {"key": "hodl", "label": "존버", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "dividends": 0.0, "price_dates": {}}], "alerts": [], "next_check_at": null, "followups": [], "limits": null, "agenda": [], "corp_actions": [], "journal": [{"date": "2026-09-29", "decided_at": "2026-09-30T06:58:25.133435+00:00", "scout_view": "시장은 반도체·AI 관련 기술주 중심으로 강세를 보이고, 금융·소비재·통신 섹터는 상대적으로 약세다. 단기적으로 반도체 및 일부 소프트웨어 종목의 모멘텀이 뚜렷해 이들 중심으로 후보를 추렸다.", "shortlist": [{"code": "NVDA.O", "why": "반도체 대장주로 20일 +2.9%, 60일 +16.2%의 안정적 상승 추세, RSI 54로 과열 부담 적음", "name": "엔비디아"}, {"code": "AMD.O", "why": "20일 +29.1%의 강한 모멘텀, 20일선 대비 +12.1%, 고점 대비 -3.7%로 추가 상승 여력", "name": "AMD(어드밴스드 마이크로 디바이시스)"}, {"code": "TSM", "why": "반도체 파운드리 선두, 20일 +10.0% 상승, 변동성 26%로 안정적, RSI 62", "name": "TSMC ADR"}, {"code": "ASML.O", "why": "반도체 장비 핵심, 5일 +4.9%, 20일 +8.2%로 단기·중기 모두 강세, RSI 61", "name": "ASML 홀딩 ADR"}, {"code": "AMAT.O", "why": "반도체 장비, 5일 +8.4%, 20일 +11.7%로 강한 상승, RSI 64, 고점 대비 -29.2%로 회복 여지", "name": "어플라이드 머티어리얼즈"}, {"code": "MRVL.O", "why": "반도체 설계, 20일 +24.4%의 급등, 20일선 대비 +11.0%, RSI 63", "name": "마벨 테크놀로지 그룹"}, {"code": "MU.O", "why": "메모리 반도체, 20일 +11.1%, 60일 +8.2%로 업황 개선 기대, RSI 55", "name": "마이크론 테크놀로지"}, {"code": "META.O", "why": "20일 +29.1%의 강한 모멘텀, RSI 66, 고점 대비 -5.0%로 AI·광고 성장 기대", "name": "메타"}, {"code": "CRWD.O", "why": "사이버보안, 20일 +13.7%, 60일 +31.8%로 강세, 최고가 부근, RSI 78로 과열 가능", "name": "크라우드 스트라이크 홀딩스"}, {"code": "DDOG.O", "why": "소프트웨어, 20일 +13.3%, 5일 +8.5%의 강한 상승, RSI 84로 과매수 구간", "name": "데이터도그"}, {"code": "PLTR.O", "why": "60일 +41.1%의 장기 상승, RSI 73으로 과열이나 조정 후 재상승 가능성", "name": "팔란티어 테크놀로지스"}, {"code": "TMO", "why": "의료장비, 20일 +10.1%, 60일 +31.3%로 강한 모멘텀, RSI 87로 단기 과열", "name": "써모 피셔 사이언티픽"}, {"code": "LLY", "why": "제약 대장주, 20일 +2.4%, RSI 75, 변동성 17%로 방어적 성격", "name": "일라이 릴리"}, {"code": "DELL.K", "why": "AI 서버 수혜, 20일 +18.3%, 60일 +31.0%, RSI 51로 중립적", "name": "델테크놀로지"}, {"code": "INTC.O", "why": "20일 +29.5%의 이례적 급등, RSI 58, 변동성 75%로 뉴스 확인 필요", "name": "인텔"}], "market_view": "채권 금리 상승 부담 속에서도 AI·반도체 모멘텀이 강하나, 과열 종목은 피하고 현금을 일부 보유해 변동성에 대비한다.", "targets": [{"code": "NVDA.O", "name": "엔비디아", "weight": 0.12, "reason": "AI 대장주로 상대적으로 안정적, RSI 54로 과열 부담 없음", "plan": {"stop_pct": 0.08, "take_pct": 0.15, "trail_pct": 0.08, "take_frac": 0.5}}, {"code": "TSM", "name": "TSMC ADR", "weight": 0.12, "reason": "파운드리 선두, 안정적 변동성 26%, RSI 62", "plan": {"stop_pct": 0.1, "take_pct": 0.2, "trail_pct": 0.08, "take_frac": 0.5}}, {"code": "AMD.O", "name": "AMD(어드밴스드 마이크로 디바이시스)", "weight": 0.1, "reason": "20일 +29%의 강한 모멘텀, AI 인프라 기대", "plan": {"stop_pct": 0.12, "take_pct": 0.25, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "ASML.O", "name": "ASML 홀딩 ADR", "weight": 0.1, "reason": "반도체 장비 핵심, 최근 5일 +4.9% 강세", "plan": {"stop_pct": 0.12, "take_pct": 0.2, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "META.O", "name": "메타", "weight": 0.1, "reason": "AI·광고 성장 기대로 20일 +29.1%, RSI 66", "plan": {"stop_pct": 0.12, "take_pct": 0.2, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "AMAT.O", "name": "어플라이드 머티어리얼즈", "weight": 0.08, "reason": "장비주, 20일 +11.7%, 고점 대비 회복 여지", "plan": {"stop_pct": 0.12, "take_pct": 0.25, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "MRVL.O", "name": "마벨 테크놀로지 그룹", "weight": 0.08, "reason": "AI 반도체 설계, 20일 +24.4% 급등", "plan": {"stop_pct": 0.15, "take_pct": 0.3, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "MU.O", "name": "마이크론 테크놀로지", "weight": 0.05, "reason": "메모리 반도체, RSI 55로 조정 후 재상승 기대", "plan": {"stop_pct": 0.15, "take_pct": 0.25, "trail_pct": 0.1, "take_frac": 0.5}}, {"code": "DELL.K", "name": "델테크놀로지", "weight": 0.05, "reason": "AI 서버 수혜, RSI 51 중립, 60일 +31%", "plan": {"stop_pct": 0.15, "take_pct": 0.3, "trail_pct": 0.1, "take_frac": 0.5}}], "cash_reason": "채권 금리 상승과 일부 종목 과열에 대비해 현금 20%를 보유하고, 조정 시 추가 매수 여력을 확보한다.", "model": "deepseek-v4-pro", "usage": {"scout": {"prompt_tokens": 9942, "completion_tokens": 6414, "total_tokens": 16356, "prompt_tokens_details": {"cached_tokens": 9856}, "completion_tokens_details": {"reasoning_tokens": 5556}, "prompt_cache_hit_tokens": 9856, "prompt_cache_miss_tokens": 86}, "decide": {"prompt_tokens": 7185, "completion_tokens": 6074, "total_tokens": 13259, "prompt_tokens_details": {"cached_tokens": 384}, "completion_tokens_details": {"reasoning_tokens": 5125}, "prompt_cache_hit_tokens": 384, "prompt_cache_miss_tokens": 6801}}, "monkey": ["버라이존", "코스트코 홀세일", "웰타워", "어플라이드 머티어리얼즈", "린드"]}], "rt": null}], "rules": {"model": "deepseek-v4-pro", "model_react": "deepseek-v4-pro", "model_triage": "deepseek-flash", "max_positions": 10, "min_weight": 0.03, "max_weight": 0.3, "monkey_picks": 5, "monkey_every": 5, "poll_seconds": 20, "news_seconds": 120, "heartbeat_min": 90, "max_reviews": 20, "max_triages": 80, "news_confirm_min": 15, "news_min_stop_gap": 0.02, "max_sector_weight": 0.4, "default_stop_range": [0.05, 0.15], "stop_fast_through": 0.02, "open_quiet_min": 15, "min_hold_min": 30, "max_buy_turnover": 0.3, "max_daily_loss": 0.03, "chase_limit": 0.02, "no_trade_before_close_min": {"kr": 10, "us": 10}}};
 const COLOR = { ai: "--p-ai", monkey: "--p-monkey", hodl: "--p-hodl" };
 const SHORT = { ai: "AI", monkey: "원숭이", hodl: "존버" };
 const SVGNS = "http://www.w3.org/2000/svg";
+const ROOT = document.documentElement;
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -252,7 +337,58 @@ function sv(tag, attrs, ...kids) {
   for (const kid of kids.flat()) if (kid != null) el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   return el;
 }
-const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const cssVar = name => getComputedStyle(ROOT).getPropertyValue(name).trim();
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+/* ---------- 아이콘 (선만, 색은 글자색을 따른다) ---------- */
+const icon = (...kids) => () => sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, ...kids.map(k => k()));
+const ICON = {
+  auto: icon(() => sv("circle", { cx: 12, cy: 12, r: 8 }), () => sv("path", { d: "M12 4a8 8 0 0 1 0 16z", fill: "currentColor" })),
+  sun: icon(() => sv("circle", { cx: 12, cy: 12, r: 4 }), () => sv("path", { d: "M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" })),
+  moon: icon(() => sv("path", { d: "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" })),
+  podium: icon(() => sv("path", { d: "M3 20h18M4.5 20v-7h5v7M9.5 20V6h5v14M14.5 20v-10h5v10" })),
+  pulse: icon(() => sv("path", { d: "M3 12h4l3-7 4 14 3-7h4" })),
+  spark: icon(() => sv("path", { d: "M12 3l2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4z" })),
+  wallet: icon(() => sv("rect", { x: 3, y: 7, width: 18, height: 13, rx: 2.5 }), () => sv("path", { d: "M8.5 7V5.5A1.5 1.5 0 0 1 10 4h4a1.5 1.5 0 0 1 1.5 1.5V7M3 12.5h18" })),
+};
+
+/* ---------- 기기 모양: PC / 태블릿 / 폰 ---------- */
+const MQ = { desktop: window.matchMedia("(min-width: 1024px)"), phone: window.matchMedia("(max-width: 719px)") };
+const detectLayout = () => MQ.desktop.matches ? "desktop" : MQ.phone.matches ? "phone" : "tablet";
+const LAYOUT = { now: detectLayout() };
+ROOT.setAttribute("data-layout", LAYOUT.now);
+
+/* ---------- 테마: 자동(보는 사람 설정) · 밝게 · 어둡게. 고른 건 이 브라우저에만 남는다 ---------- */
+const THEME = { mode: "auto", host: ROOT.getAttribute("data-theme"), expect: ROOT.getAttribute("data-theme") };
+function applyTheme(mode) {
+  THEME.mode = mode;
+  const want = mode === "auto" ? THEME.host : mode;
+  THEME.expect = want;
+  if (want) ROOT.setAttribute("data-theme", want); else ROOT.removeAttribute("data-theme");
+  document.querySelectorAll(".seg.theme button").forEach(b => {
+    const on = b.dataset.mode === mode;
+    b.setAttribute("aria-checked", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;
+  });
+  store.set("league-theme", mode);
+}
+function themeControl() {
+  const opts = [["auto", "자동", ICON.auto], ["light", "밝게", ICON.sun], ["dark", "어둡게", ICON.moon]];
+  const box = h("div", { class: "seg theme", role: "radiogroup", "aria-label": "화면 테마" },
+    opts.map(([k, label, ic]) => h("button", { type: "button", role: "radio", "data-mode": k, onclick: () => applyTheme(k) }, ic(), label)));
+  box.addEventListener("keydown", e => {
+    const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const i = (opts.findIndex(o => o[0] === THEME.mode) + d + opts.length) % opts.length;
+    applyTheme(opts[i][0]);
+    box.querySelector(`[data-mode="${opts[i][0]}"]`).focus();
+  });
+  return box;
+}
 
 function krwShort(x) {
   const sign = x < 0 ? "-" : "";
@@ -309,6 +445,27 @@ function headline(m) {
   return h("p", { class: "headline" }, `지금 1등은 ${lead.label} (${pct(lead.ret)}). `, h("span", { class: "soft" }, gapText));
 }
 
+/* AI와 존버의 차이가 운으로도 나올 만한 크기인지. 두 선수의 하루 수익률 차이로 흔들림 폭을 잰다 */
+function luckNote(m) {
+  const ai = m.players.find(p => p.key === "ai"), hodl = m.players.find(p => p.key === "hodl");
+  if (!ai || !hodl) return null;
+  const n = Math.min(ai.history.length, hodl.history.length) - 1;
+  if (n < 1) return null;
+  if (n < 5) return h("p", { class: "luck" }, `리그 ${n}일째라 아직 실력 차이를 말하기 일러요. 하루에도 1~2%씩은 운으로 벌어져요.`);
+  const diffs = [];
+  for (let i = 1; i <= n; i++) {
+    diffs.push(ai.history[i].equity / ai.history[i - 1].equity - (hodl.history[i].equity / hodl.history[i - 1].equity));
+  }
+  const mean = diffs.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(diffs.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, n - 1));
+  const band = 2 * sd * Math.sqrt(n);
+  const gap = ai.ret - hodl.ret;
+  const g = `${Math.abs(gap * 100).toFixed(1)}%p`, b = `±${(band * 100).toFixed(1)}%p`;
+  return h("p", { class: "luck" }, Math.abs(gap) < band
+    ? `지금 차이 ${g}는 ${n}거래일 동안 운으로도 나올 수 있는 폭(${b}) 안이에요. 더 지켜봐야 해요.`
+    : `지금 차이 ${g}는 ${n}거래일 동안 운으로 벌어질 만한 폭(${b})을 넘었어요.`);
+}
+
 function standings(m) {
   const ranked = [...m.players].sort((a, b) => b.ret - a.ret);
   const tie = ranked.every(p => Math.abs(p.ret - ranked[0].ret) < 5e-5);
@@ -324,6 +481,9 @@ function standings(m) {
       h("span", { class: "stat eq" }, h("span", { class: "k" }, "평가금액"), money(p.equity, m.currency)),
       h("span", { class: "stat today" }, h("span", { class: "k" }, todayKey), delta(p.today)),
       h("span", { class: "stat trades" }, h("span", { class: "k" }, "매매"), `${p.n_trades}건`))));
+}
+function standingsCard(m) {
+  return h("section", { class: "card cq" }, h("div", { class: "card-head" }, h("h2", {}, "리그 순위")), standings(m));
 }
 
 /* ---------- 수익률 레이스 ---------- */
@@ -346,6 +506,15 @@ function niceTicks(lo, hi, count) {
 function tickText(v) {
   const t = (v * 100).toFixed(2).replace(/\.?0+$/, "");
   return (v > 0 ? "+" : "") + (t === "-0" ? "0" : t) + "%";
+}
+function placeTip(tip, cx, cy) {
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let left = cx + 16, top = cy + 16;
+  if (left + r.width > window.innerWidth - 8) left = cx - r.width - 16;
+  if (top + r.height > window.innerHeight - 8) top = cy - r.height - 16;
+  tip.style.left = Math.max(8, left) + "px";
+  tip.style.top = Math.max(8, top) + "px";
 }
 
 function drawChart(host, m) {
@@ -432,13 +601,7 @@ function drawChart(host, m) {
       const p = s.pts[i];
       tip.append(h("div", { class: "t-row" }, h("i", { style: `--c: var(${COLOR[s.key]})` }), h("b", {}, pct(p.ret)), h("span", {}, `${SHORT[s.key]} · ${money(p.eq, m.currency)}`)));
     });
-    tip.hidden = false;
-    const r = tip.getBoundingClientRect();
-    let left = cx + 16, top = cy + 16;
-    if (left + r.width > window.innerWidth - 8) left = cx - r.width - 16;
-    if (top + r.height > window.innerHeight - 8) top = cy - r.height - 16;
-    tip.style.left = Math.max(8, left) + "px";
-    tip.style.top = Math.max(8, top) + "px";
+    placeTip(tip, cx, cy);
   }
   function hide() {
     cross.setAttribute("visibility", "hidden");
@@ -504,11 +667,14 @@ function decisionBody(j, m, compact) {
       planPct(t.plan) && h("p", { class: "meta pick-why" }, planPct(t.plan))));
     const cash = Math.max(0, 1 - total);
     items.push(h("li", { class: "pick cash" },
-      h("span", { class: "pick-name" }, "현금"),
+      h("span", { class: "pick-name" }, j.kept && j.kept.length ? "현금과 그대로 두는 종목" : "현금"),
       h("span", { class: "wbar" }, h("span", { class: "track" }, h("span", { class: "fill", style: `width: ${Math.min(100, cash / scale * 100)}%` })), h("span", { class: "pctv" }, `${Math.round(cash * 100)}%`)),
       j.cash_reason && h("p", { class: "pick-why" }, j.cash_reason)));
     body.push(h("ul", { class: "picks" }, items));
   }
+  if (j.kept && j.kept.length) body.push(h("p", { class: "meta" }, `안 적어서 주식 수 그대로 들고 가는 종목: ${j.kept.map(k => k.name).join(", ")}`));
+  if (j.notes && j.notes.length) body.push(h("ul", { class: "notes" }, j.notes.map(n => h("li", {}, n))));
+  if (j.unfilled && j.unfilled.length) body.push(h("p", { class: "error" }, `시가를 못 받아서 못 산 종목: ${j.unfilled.map(u => `${u.name}(${SHORT[u.player] || u.player})`).join(", ")}`));
   if (!compact && j.shortlist && j.shortlist.length) {
     body.push(h("details", { "data-k": `short-${m.key}-${j.date}-${compact ? "c" : "f"}` },
       h("summary", {}, `1단계에서 추린 후보 ${j.shortlist.length}개 보기`),
@@ -527,7 +693,7 @@ function decisionBody(j, m, compact) {
 function decisionCard(m) {
   const j = m.journal[0];
   if (!j) return null;
-  return h("section", { class: "card" },
+  return h("section", { class: "card cq" },
     h("div", { class: "card-head" },
       h("h2", {}, "AI의 한 수"),
       h("p", { class: "sub" }, `${day(j.date)} 종가까지 보고 정한 목표 비중이에요. 주문은 다음 거래일 시가에 체결돼요.`)),
@@ -537,7 +703,7 @@ function decisionCard(m) {
 function journalCard(m) {
   const past = m.journal.slice(1);
   if (!past.length) return null;
-  return h("section", { class: "card" },
+  return h("section", { class: "card cq" },
     h("div", { class: "card-head" }, h("h2", {}, "지난 판단"), h("p", { class: "sub" }, "AI가 날마다 뭘 보고 뭘 샀는지 남겨둔 기록이에요.")),
     h("div", { class: "entries" }, past.map(j => h("details", { class: "entry", "data-k": `entry-${m.key}-${j.date}` },
       h("summary", {}, `${day(j.date)} 결정 · ${j.targets ? j.targets.map(t => t.name).slice(0, 4).join(", ") + (j.targets.length > 4 ? ` 외 ${j.targets.length - 4}개` : "") : "매매 없음"}`),
@@ -545,7 +711,23 @@ function journalCard(m) {
 }
 
 /* ---------- 보유 종목 ---------- */
+/* AI 포트폴리오의 업종별 비중. 한 업종 한도(40%)를 넘으면 주의색으로 */
+function sectorBars(p) {
+  const cap = DATA.rules.max_sector_weight;
+  const sums = {};
+  for (const x of p.positions) if (x.sector) sums[x.sector] = (sums[x.sector] || 0) + x.weight;
+  const rows = Object.entries(sums).sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return null;
+  return h("div", { class: "sectors", "aria-label": "업종 비중" },
+    h("span", { class: "cap-k" }, `업종 비중 · 세로선은 한 업종 한도 ${Math.round(cap * 100)}%`),
+    rows.map(([name, w]) => h("div", { class: `sec${w > cap + 0.005 ? " over" : ""}` },
+      h("span", { class: "nm", title: name }, name),
+      h("span", { class: "pv" }, `${Math.round(w * 100)}%` + (w > cap + 0.005 ? " · 한도 넘음" : "")),
+      h("span", { class: "bar" }, h("span", { style: `width: ${Math.min(100, w * 100)}%` }), h("i", { style: `left: calc(${cap * 100}% - 1px)` })))));
+}
+
 function holdingsCard(m) {
+  const phone = LAYOUT.now === "phone";
   const cols = m.players.map(p => {
     const items = p.positions.map(x => h("li", { class: "hitem" },
       h("span", { class: "n", title: x.name }, x.name),
@@ -556,24 +738,49 @@ function holdingsCard(m) {
       h("span", { class: "n" }, "현금"),
       h("span", { class: "w" }, `${(p.cash / p.equity * 100).toFixed(1)}%`),
       h("span", { class: "d" }, h("span", {}, money(p.cash, m.currency, true)), h("span", {}))));
-    return h("div", { class: "hcol" },
+    const div = p.dividends > 0 ? h("p", { class: "meta" }, `지금까지 쌓인 배당 ${money(p.dividends, m.currency, true)}`) : null;
+    const col = h("div", { class: "hcol", "data-player": p.key },
       h("div", { class: "hhead" }, h("i", { class: "key", style: `--c: var(${COLOR[p.key]})` }), p.label, h("span", { class: "eqv" }, money(p.equity, m.currency))),
       p.positions.length ? null : h("p", { class: "hnote" }, m.pending ? "첫 주문이 체결되길 기다리는 중이에요." : "보유 종목이 없어요."),
-      h("ul", { class: "hlist" }, items));
+      p.key === "ai" ? sectorBars(p) : null,
+      h("ul", { class: "hlist" }, items),
+      div);
+    if (phone) col.hidden = p.key !== UI.holder;
+    return col;
   });
-  return h("section", { class: "card" },
+  let picker = null;
+  if (phone) {
+    picker = h("div", { class: "seg", role: "tablist", "aria-label": "선수" }, m.players.map(p =>
+      h("button", { type: "button", role: "tab", "aria-selected": p.key === UI.holder ? "true" : "false", onclick: e => {
+        UI.holder = p.key;
+        store.set("league-holder", p.key);
+        cols.forEach(c => { c.hidden = c.dataset.player !== p.key; });
+        e.currentTarget.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b === e.currentTarget ? "true" : "false"));
+      } }, p.label)));
+  }
+  const corp = (m.corp_actions || []).map(c => `${day(c.date)} ${c.name} 주식 수 ×${+c.ratio.toFixed(4)} (분할·병합)`);
+  return h("section", { class: "card cq" },
     h("div", { class: "card-head" }, h("h2", {}, "보유 종목"), h("p", { class: "sub" }, "비중과 평단 대비 수익률이에요. 가격은 마지막으로 받아온 시세 기준이에요.")),
-    h("div", { class: "holdings" }, cols));
+    picker,
+    h("div", { class: "holdings" }, cols),
+    corp.length ? h("p", { class: "meta" }, `장부 조정: ${corp.join(" · ")}`) : null);
 }
 
 /* ---------- 매매 기록 ---------- */
 function tradesCard(m) {
   const all = m.players.flatMap(p => p.trades.map(t => ({ ...t, who: p.key })))
-    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 40);
+    .sort((a, b) => ((a.at || a.date) < (b.at || b.date) ? 1 : (a.at || a.date) > (b.at || b.date) ? -1 : 0)).slice(0, 40);
   if (!all.length) return null;
   const fees = m.players.map(p => `${SHORT[p.key]} ${money(p.fees, m.currency, true)}`).join(" · ");
-  return h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h2", {}, "매매 기록"), h("p", { class: "sub" }, `최근 ${all.length}건. 지금까지 낸 수수료·세금: ${fees}`)),
+  const head = h("div", { class: "card-head" }, h("h2", {}, "매매 기록"), h("p", { class: "sub" }, `최근 ${all.length}건. 지금까지 낸 수수료·세금: ${fees}`));
+  if (LAYOUT.now === "phone") {
+    return h("section", { class: "card" }, head, h("ul", { class: "tlist" }, all.map(t => h("li", {},
+      h("span", { class: `side ${t.side}` }, t.side === "buy" ? "매수" : "매도"),
+      h("span", { class: "tname" }, t.name),
+      h("span", { class: "twho" }, SHORT[t.who]),
+      h("span", { class: "tmeta" }, `${shortDay(t.date)} · ${t.shares.toLocaleString("ko-KR")}주 @ ${price(t.price, m.currency)} · 비용 ${money(t.cost, m.currency, true)}`)))));
+  }
+  return h("section", { class: "card" }, head,
     h("div", { class: "scroll" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}, "체결일"), h("th", {}, "선수"), h("th", {}, "구분"), h("th", {}, "종목"), h("th", { class: "num" }, "수량"), h("th", { class: "num" }, "체결가"), h("th", { class: "num" }, "비용"))),
       h("tbody", {}, all.map(t => h("tr", {},
@@ -587,39 +794,42 @@ function tradesCard(m) {
 }
 
 /* ---------- 규칙 ---------- */
-function rulesFooter() {
+function rulesContent() {
   const r = DATA.rules;
+  const P = v => `${Math.round(v * 100)}%`;
   const caps = DATA.markets.map(m => `${m.name} ${money(m.capital, m.currency)}`).join(", ");
-  const costs = DATA.markets.map(m => `${m.name}은 수수료 ${(m.fee * 100).toFixed(3).replace(/0+$/, "")}%` + (m.sell_tax ? `에 매도세 ${(m.sell_tax * 100).toFixed(2)}%` : "") + (m.slippage ? `, 체결 미끄러짐 ${(m.slippage * 100).toFixed(2)}%` : "")).join(", ");
+  const costs = DATA.markets.map(m => `${m.name}은 수수료 ${(m.fee * 100).toFixed(3).replace(/0+$/, "")}%` + (m.sell_tax ? `에 매도세 ${(m.sell_tax * 100).toFixed(2)}%` : "") + (m.slippage ? `, 체결 미끄러짐 ${(m.slippage * 100).toFixed(2)}% 또는 호가 반 칸 중 큰 쪽` : "")).join(", ");
   const univ = DATA.markets.map(m => `${m.name} ${m.universe}개`).join(", ");
   const benches = DATA.markets.map(m => m.benchmark).join(", ");
-  const box = document.getElementById("rules");
-  box.textContent = "";
-  box.append(
+  const [slo, shi] = r.default_stop_range;
+  return [
     h("h2", {}, "규칙"),
     h("ul", {},
       h("li", {}, `셋 다 같은 돈으로 시작해요: ${caps}.`),
-      h("li", {}, "결정은 그 시점에 알 수 있는 정보로만 해요. 장 마감 뒤에는 확정된 종가까지 보고 정하고, 그 주문은 다음 거래일 시가에 체결돼요."),
-      h("li", {}, `장중에는 시세를 ${r.poll_seconds}초마다, 뉴스를 ${r.news_seconds}초마다 확인하다가 급변, 새 소식, AI가 걸어둔 가격 알림이 울리면 AI를 깨워요. 체결은 AI가 답한 그 순간의 시세로 해요.`),
-      h("li", {}, "AI는 한 번 정한 걸 고집하지 않아요. 점검 때마다 비중을 조금씩 늘리거나 줄이고(분할 매수·매도), 손절가·목표가·트레일링을 옮기고, 다음에 불러줄 가격과 시간을 스스로 정해요. 장이 열리면 오늘 계획을 한 번 점검해요."),
-      h("li", {}, `손절, 따라 올라가는 손절, 목표가 매도는 AI 호출 없이 바로 집행하고, 판 뒤에는 AI가 남은 계획을 다시 정해요. 손절도 트레일링도 없으면 평단 대비 10% 손절이 기본으로 걸려요. AI 점검은 하루 ${r.max_reviews}번까지예요.`),
-      h("li", {}, `기사 하나만 보고는 사고팔지 않아요. 기사만 들어온 '뉴스 점검'에서는 손절을 조이거나(지금 가격보다 ${Math.round(r.news_min_stop_gap * 100)}% 넘게 아래까지만) 알림을 걸 수만 있고, 매매는 ${r.news_confirm_min}분 뒤 주가가 시장 대비 어떻게 반응했는지 본 다음에 해요. AI한테는 최근 1시간 기사·매체 수와 '~설', '단독' 같은 추측성 표현도 같이 보여줘요.`),
-      h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스와 지표를 읽고 최대 ${r.max_positions}종목을 종목당 ${Math.round(r.min_weight * 100)}~${Math.round(r.max_weight * 100)}% 비중으로 정해요.`),
+      h("li", {}, "결정은 그 시점에 알 수 있는 정보로만 해요. 장 마감 뒤에는 확정된 종가까지 보고 정하고, 그 주문은 다음 거래일 시가에 체결돼요. AI가 안 적은 보유 종목은 주식 수 그대로 들고 가요."),
+      h("li", {}, `장중에는 시세를 ${r.poll_seconds}초마다, 뉴스와 거래소 공시를 ${r.news_seconds}초마다 확인하다가 급변, 새 소식, AI가 걸어둔 가격 알림이 울리면 AI를 깨워요. 체결은 AI가 답한 그 순간의 시세로 하고, 그사이 가격이 ${P(r.chase_limit)} 넘게 움직였으면 그 답으로는 매매하지 않아요.`),
+      h("li", {}, `손절, 따라 올라가는 손절, 목표가 매도는 AI 호출 없이 바로 집행해요. 손절도 트레일링도 없으면 종목 변동성에 맞춰 ${P(slo)}~${P(shi)} 손절이 기본으로 걸리고, 물타기해도 손절가는 내려가지 않아요. 손절선을 ${P(r.stop_fast_through)} 넘게 뚫으면 확인 없이 바로 팔아요.`),
+      h("li", {}, `장중 매매 한도: 하루 매수는 평가금액의 ${P(r.max_buy_turnover)}까지, 오늘 ${P(r.max_daily_loss)} 넘게 잃으면 그날은 새로 안 사요. 오늘 판 종목은 다시 안 사고, 산 지 ${r.min_hold_min}분 안 된 종목은 AI가 팔 수 없어요. 장 시작 뒤 ${r.open_quiet_min}분과 마감 10분 전에는 AI가 새로 사지 않아요.`),
+      h("li", {}, `한 업종에는 합쳐서 ${P(r.max_sector_weight)}까지만 담아요. 장중에 새로 살 수 있는 건 보유 종목과 전날 조사해 둔 후보뿐이라, 그날 크게 오른 종목을 따라 사지 않아요.`),
+      h("li", {}, `기사 하나만 보고는 사고팔지 않아요. 기사만 들어온 '뉴스 점검'에서는 손절을 조이거나(지금 가격보다 ${P(r.news_min_stop_gap)} 넘게 아래까지만) 알림을 걸 수만 있고, 매매는 ${r.news_confirm_min}분 뒤 주가가 시장 대비 어떻게 반응했는지 본 다음에 해요.`),
+      h("li", {}, "액면분할·병합으로 가격 기준이 바뀌면 주식 수와 평단, 손절가를 같은 비율로 고쳐요. 배당은 연 배당수익률을 거래일마다 나눠서 현금으로 넣어요 (근사치)."),
+      h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스·공시·지표와 다가오는 일정(FOMC, 옵션 만기, 미국 실적 발표)을 보고 최대 ${r.max_positions}종목을 종목당 ${P(r.min_weight)}~${P(r.max_weight)} 비중으로 정해요. 다른 선수의 순위는 AI한테 안 보여줘요.`),
       h("li", {}, `원숭이는 같은 후보에서 ${r.monkey_picks}종목을 무작위로 골라 똑같이 나눠 사고, 결정 ${r.monkey_every}번마다 새로 찍어요.`),
       h("li", {}, `존버는 첫날 ${benches}를 사서 계속 들고 가요.`),
       h("li", {}, `비용은 ${costs}로 계산해요. 대략적인 가정값이에요.`),
-      h("li", {}, "시세와 뉴스는 네이버 증권에서 받아와요.")),
-    h("p", { class: "disclaimer" }, "전부 가짜 돈으로 하는 실험이에요. 여기 나온 종목은 투자 추천이 아니에요."));
+      h("li", {}, "시세·뉴스·공시는 네이버 증권, 미국 실적 일정은 나스닥, FOMC 일정은 연준 홈페이지에서 받아와요.")),
+    h("p", { class: "disclaimer" }, "전부 가짜 돈으로 하는 실험이에요. 여기 나온 종목은 투자 추천이 아니에요."),
+  ];
 }
 
 /* ---------- 실시간 ---------- */
 const KIND = {
   react: ["AI 판단", "◆"], stop: ["손절", "▼"], trail: ["트레일링", "▼"], take: ["목표 도달", "▲"], fill: ["체결", "●"],
   alert: ["AI 알림", "◎"], fast_move: ["급변", "!"], index_move: ["지수 급변", "!"], day_step: ["오늘 등락", "±"],
-  news: ["뉴스", "≡"], triage: ["뉴스 심사", "○"], info: ["안내", "i"], error: ["오류", "×"], daily: ["정산", "✓"],
-  news_followup: ["뉴스 확인", "↻"],
+  news: ["뉴스", "≡"], triage: ["뉴스 심사", "○"], info: ["안내", "i"], error: ["주의", "×"], daily: ["정산", "✓"],
+  news_followup: ["뉴스 확인", "↻"], retry: ["다시 확인", "↻"],
 };
-const LOUD = new Set(["react", "stop", "trail", "take", "fill", "alert", "fast_move", "index_move", "day_step", "error", "daily", "news_followup"]);
+const LOUD = new Set(["react", "stop", "trail", "take", "fill", "alert", "fast_move", "index_move", "day_step", "error", "daily", "news_followup", "retry"]);
 
 /* 계획 한 줄: 손절 · 따라 올라가는 손절 · 목표가(분할 매도) */
 function planLine(p, cur) {
@@ -670,7 +880,7 @@ function rtState(m) {
   const stale = age > Math.max(60, 3 * (snap.poll_seconds || DATA.rules.poll_seconds));
   const labels = {
     pre: "장 시작 전", settle: "마감 후 정산 대기", post: "정산 끝, 다음 장 대기", closed: "휴장 (주말)",
-    holiday: "오늘은 휴장", quote_error: "시세 받는 중 오류", quotes_closed: "시세가 '장 마감'으로 표시돼요",
+    holiday: "오늘은 휴장", quote_error: "시세 받는 중 오류", quotes_closed: "정규장이 아직 안 열렸어요",
   };
   let label = labels[snap.phase] || snap.phase, cls = "";
   if (snap.phase === "open") {
@@ -681,6 +891,7 @@ function rtState(m) {
   else if (snap.phase === "quote_error") cls = "warn";
   return { snap, age, stale, label, cls };
 }
+const isLive = m => { const s = rtState(m); return !!(s && s.snap.phase === "open" && !s.stale); };
 
 function liveStrip(m) {
   const s = rtState(m);
@@ -764,13 +975,7 @@ function drawIntraday(host, m) {
       const p = s.pts[i];
       tip.append(h("div", { class: "t-row" }, h("i", { style: `--c: var(${COLOR[s.key]})` }), h("b", {}, pct(p.ret)), h("span", {}, `${SHORT[s.key]} · ${money(p.eq, m.currency)}`)));
     });
-    tip.hidden = false;
-    const r = tip.getBoundingClientRect();
-    let left = cx + 16, top = cy + 16;
-    if (left + r.width > window.innerWidth - 8) left = cx - r.width - 16;
-    if (top + r.height > window.innerHeight - 8) top = cy - r.height - 16;
-    tip.style.left = Math.max(8, left) + "px";
-    tip.style.top = Math.max(8, top) + "px";
+    placeTip(tip, cx, cy);
   }
   function hide() {
     cross.setAttribute("visibility", "hidden");
@@ -813,7 +1018,6 @@ function reactionDetails(f, m) {
     h("b", {}, a.name), " ",
     h("span", { class: "from-to" }, a.to == null ? "비중 그대로" : `${Math.round(a.from * 100)}% → ${Math.round(a.to * 100)}%`),
     a.plan && planLine(a.plan, m.currency) ? ` · ${planLine(a.plan, m.currency)}` : "",
-    a.stop_pct ? ` · 손절 ${Math.round(a.stop_pct * 100)}%` : "", a.take_pct ? ` · 목표 +${Math.round(a.take_pct * 100)}%` : "",
     a.reason ? ` — ${a.reason}` : "",
   ]);
   const fills = (r.fills || []).map(x => `${side(x)} ${x.shares.toLocaleString("ko-KR")}주 @ ${price(x.price, m.currency)}`);
@@ -844,45 +1048,61 @@ function feedItem(f, m) {
     f.kind === "react" && f.reaction ? reactionDetails(f, m) : h("span", { class: "ftext" }, f.text));
 }
 
-function liveCards(m) {
-  const rt = m.rt;
-  if (!rt) return [];
+/* 실시간 칸: 엔진 상태, 오늘 매매 제한, AI가 지켜보는 것, 다가오는 일정 */
+function watchCard(m) {
+  const s = rtState(m);
+  const lim = m.limits;
+  const follow = m.followups || [];
+  const blocks = [];
+  if (s) blocks.push(liveStrip(m));
+  else blocks.push(h("p", { class: "sub" }, "실시간 엔진이 꺼져 있어요. PC에서 start_live.bat을 켜 두면 장중에 여기가 채워져요."));
+  if (lim && lim.blocked && lim.blocked.length) {
+    blocks.push(h("div", { class: "notice", role: "status" }, h("b", {}, "지금은 AI가 새로 사지 않아요"), h("ul", {}, lim.blocked.map(x => h("li", {}, x)))));
+  }
+  if (lim) blocks.push(h("p", { class: "meta" }, `오늘 남은 장중 매수 한도 ${money(lim.buy_left, m.currency)}`));
+  if ((m.alerts || []).length) blocks.push(h("div", {}, h("b", {}, "AI가 걸어둔 가격 알림"), h("ul", {}, m.alerts.map(a => h("li", {}, alertLine(a, m.currency))))));
+  if (follow.length) blocks.push(h("div", {}, h("b", {}, "뉴스 뒤 주가 반응 확인"), h("ul", {}, follow.map(x => h("li", {}, `${localTime(x.due, m.tz).slice(0, 5)} ${x.name} — ${x.title}`)))));
+  if (m.next_check_at) blocks.push(h("p", { class: "meta" }, `아무 일 없으면 ${localTime(m.next_check_at, m.tz).slice(0, 5)}에 다시 점검해요`));
+  if ((m.agenda || []).length) blocks.push(h("div", {}, h("b", {}, "다가오는 일정"), h("ul", {}, m.agenda.map(a => h("li", {}, a)))));
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "실시간"), h("p", { class: "sub" }, `시세 ${DATA.rules.poll_seconds}초, 뉴스·공시 ${DATA.rules.news_seconds}초마다 확인해요.`)),
+    h("div", { class: "fbody" }, blocks));
+}
+
+function intradayCard(m) {
+  if (!m.rt) return null;
   const host = h("div", { class: "chart" });
-  const chartCard = h("section", { class: "card" },
+  const card = h("section", { class: "card" },
     h("div", { class: "card-head" },
       h("h2", {}, "오늘 장중 흐름"),
       h("p", { class: "sub" }, "어제 종가를 0%로 놓고 1분마다 찍어요.")),
-    liveStrip(m),
     h("div", { class: "legend" }, m.players.map(p => h("span", {}, h("i", { style: `--c: var(${COLOR[p.key]})` }), p.label))),
     host);
-  chartCard._draw = () => drawIntraday(host, m);
-  const all = rt.feed || [];
+  card._draw = () => drawIntraday(host, m);
+  return card;
+}
+
+function feedCard(m) {
+  const all = (m.rt && m.rt.feed) || [];
   const loud = all.filter(f => LOUD.has(f.kind));
   const hidden = all.length - loud.length;
   const shown = (FEED.all ? all : loud).slice(0, 40);
   const toggle = hidden > 0 || FEED.all
     ? h("button", { class: "linkbtn", type: "button", onclick: () => { FEED.all = !FEED.all; render(); } }, FEED.all ? "중요한 것만 보기" : `뉴스·심사 등 ${hidden}건 더 보기`)
     : null;
-  const follow = m.followups || [];
-  const watching = (m.alerts || []).length || follow.length || m.next_check_at
-    ? h("div", { class: "fbody" },
-        (m.alerts || []).length ? h("div", {}, h("b", {}, "AI가 걸어둔 알림"), h("ul", {}, m.alerts.map(a => h("li", {}, alertLine(a, m.currency))))) : null,
-        follow.length ? h("div", {}, h("b", {}, "뉴스 뒤 주가 반응 확인"), h("ul", {}, follow.map(x => h("li", {}, `${localTime(x.due, m.tz).slice(0, 5)} ${x.name} — ${x.title}`)))) : null,
-        m.next_check_at ? h("p", { class: "meta" }, `아무 일 없으면 ${localTime(m.next_check_at, m.tz).slice(0, 5)}에 다시 점검해요`) : null)
-    : null;
-  const feedCard = h("section", { class: "card" },
+  return h("section", { class: "card feed-card" },
     h("div", { class: "card-head" },
       h("h2", {}, "지금 벌어지는 일"),
-      h("p", { class: "sub" }, `시세는 ${DATA.rules.poll_seconds}초, 뉴스는 ${DATA.rules.news_seconds}초마다 확인해요. 급변, 새 소식, AI가 걸어둔 알림이 울릴 때 AI를 깨워요.`)),
-    watching,
+      h("p", { class: "sub" }, "급변, 새 소식, AI가 걸어둔 알림이 울리면 AI를 깨워요. 판단을 누르면 자세히 볼 수 있어요.")),
     shown.length
       ? h("ul", { class: "feed" }, shown.map(f => feedItem(f, m)))
       : h("div", { class: "empty" }, h("strong", {}, "아직 큰 일은 없었어요"), h("span", {}, "급변, 손절, AI 판단 같은 일이 생기면 여기에 쌓여요.")),
     toggle && h("div", { class: "feed-tools" }, toggle));
-  return [chartCard, feedCard];
 }
 
-/* ---------- 조립 ---------- */
+/* ---------- 조립: 기기마다 배치가 다르다 ---------- */
+const SECTIONS = [["rank", "순위", ICON.podium], ["live", "실시간", ICON.pulse], ["ai", "AI", ICON.spark], ["hold", "보유", ICON.wallet]];
+
 function renderMarket(m) {
   const panel = h("section", { class: "panel", id: `panel-${m.key}`, role: "tabpanel", "aria-labelledby": `tab-${m.key}` });
   const status = h("div", { class: "status" },
@@ -891,24 +1111,29 @@ function renderMarket(m) {
     m.pending && h("span", { class: "chip" }, `주문 대기: ${day(m.pending.decided_on)} 결정분, 다음 장 시가에 체결`),
     m.live.provisional && h("span", { class: "chip live" }, `${day(m.live.date)} 장중 가격 반영`));
   const race = raceCard(m);
-  const [liveChart, liveFeed] = liveCards(m);
-  panel.append(
-    status,
-    headline(m),
-    h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "리그 순위")), standings(m)),
-    liveChart || "",
-    liveFeed || "",
-    race,
-    decisionCard(m) || "",
-    holdingsCard(m),
-    tradesCard(m) || "",
-    journalCard(m) || "");
-  panel._race = race;
-  panel._live = liveChart || null;
+  const intraday = intradayCard(m);
+  const top = [status, headline(m), luckNote(m)];
+  const L = LAYOUT.now;
+  if (L === "desktop") {
+    panel.append(...top.filter(Boolean), h("div", { class: "board" },
+      h("div", { class: "mainc" }, ...[standingsCard(m), race, intraday, decisionCard(m), holdingsCard(m), tradesCard(m), journalCard(m)].filter(Boolean)),
+      h("aside", { class: "aside", "aria-label": "실시간" }, watchCard(m), feedCard(m))));
+  } else if (L === "tablet") {
+    panel.append(...[...top, standingsCard(m), watchCard(m), intraday, feedCard(m), race, decisionCard(m), holdingsCard(m), tradesCard(m), journalCard(m)].filter(Boolean));
+  } else {
+    const parts = {
+      rank: () => [...top, standingsCard(m), race, h("footer", { class: "foot card" }, rulesContent())],
+      live: () => [watchCard(m), intraday, feedCard(m)],
+      ai: () => [decisionCard(m) || h("div", { class: "empty" }, h("strong", {}, "아직 AI 결정이 없어요"), h("span", {}, "장이 끝나고 하루 정산 때 첫 결정을 해요.")), journalCard(m)],
+      hold: () => [holdingsCard(m), tradesCard(m)],
+    };
+    panel.append(...parts[UI.section]().filter(Boolean));
+  }
+  panel._charts = [race, intraday].filter(c => c && panel.contains(c));
   return panel;
 }
 
-const UI = { tab: null, open: new Set(), scroll: 0 };
+const UI = { tab: null, open: new Set(), scroll: 0, section: "rank", holder: "ai" };
 const conn = { ok: true };
 let views = [], buttons = [];
 
@@ -921,10 +1146,7 @@ function restoreUI() {
   document.querySelectorAll("details[data-k]").forEach(d => { if (UI.open.has(d.dataset.k)) d.open = true; });
   window.scrollTo(0, UI.scroll);
 }
-function drawPanel(panel) {
-  panel._race._draw();
-  if (panel._live) panel._live._draw();
-}
+function drawPanel(panel) { (panel._charts || []).forEach(c => c._draw()); }
 function select(key, focus) {
   views.forEach(({ m, panel }, i) => {
     const on = m.key === key;
@@ -934,8 +1156,19 @@ function select(key, focus) {
     if (on) { drawPanel(panel); if (focus) buttons[i].focus(); }
   });
   UI.tab = key;
-  try { localStorage.setItem("league-tab", key); } catch (e) {}
+  store.set("league-tab", key);
   if (location.hash !== `#${key}`) history.replaceState(null, "", `#${key}`);
+  renderBottomNav();
+}
+function renderBottomNav() {
+  const nav = document.getElementById("bottomnav");
+  nav.hidden = LAYOUT.now !== "phone";
+  if (nav.hidden) return nav.replaceChildren();
+  const m = DATA.markets.find(x => x.key === UI.tab) || DATA.markets[0];
+  nav.replaceChildren(...SECTIONS.map(([k, label, ic]) => h("button", {
+    type: "button", role: "tab", "aria-selected": UI.section === k ? "true" : "false",
+    onclick: () => { UI.section = k; store.set("league-section", k); render(); window.scrollTo(0, 0); },
+  }, ic(), label, k === "live" && isLive(m) ? h("i", { class: "dot", "aria-label": "감시 중" }) : null)));
 }
 function stampUpdate() {
   const latest = DATA.markets.map(m => m.updated_at).filter(Boolean).sort().pop();
@@ -944,12 +1177,15 @@ function stampUpdate() {
 }
 function render() {
   captureUI();
+  ROOT.setAttribute("data-layout", LAYOUT.now);
   const panels = document.getElementById("panels");
   panels.textContent = "";
   views = DATA.markets.map(m => ({ m, panel: renderMarket(m) }));
   views.forEach(v => panels.append(v.panel));
   select(views.some(v => v.m.key === UI.tab) ? UI.tab : views[0].m.key);
-  rulesFooter();
+  const rules = document.getElementById("rules");
+  rules.hidden = LAYOUT.now === "phone";
+  rules.replaceChildren(...(rules.hidden ? [] : rulesContent()));
   stampUpdate();
   restoreUI();
 }
@@ -969,12 +1205,17 @@ async function refresh() {
 }
 
 function boot() {
+  const saved = store.get("league-theme");
+  document.getElementById("controls").prepend(themeControl());
+  applyTheme(["auto", "light", "dark"].includes(saved) ? saved : "auto");
   const tabs = document.getElementById("tabs");
   if (!DATA || !DATA.markets.length) {
     document.getElementById("panels").append(h("p", { class: "headline" }, "아직 리그 기록이 없어요. python -m trader run 을 먼저 돌려주세요."));
     return;
   }
-  buttons = DATA.markets.map(m => h("button", { class: "tab", role: "tab", id: `tab-${m.key}`, "aria-controls": `panel-${m.key}`, type: "button" }, `${m.name} 리그`));
+  UI.section = SECTIONS.some(s => s[0] === store.get("league-section")) ? store.get("league-section") : "rank";
+  UI.holder = ["ai", "monkey", "hodl"].includes(store.get("league-holder")) ? store.get("league-holder") : "ai";
+  buttons = DATA.markets.map(m => h("button", { role: "tab", id: `tab-${m.key}`, "aria-controls": `panel-${m.key}`, type: "button" }, `${m.name} 리그`));
   tabs.append(...buttons);
   buttons.forEach((b, i) => {
     b.addEventListener("click", () => select(DATA.markets[i].key));
@@ -986,18 +1227,31 @@ function boot() {
     });
   });
   let first = location.hash.slice(1);
-  if (!DATA.markets.some(m => m.key === first)) {
-    try { first = localStorage.getItem("league-tab"); } catch (e) { first = null; }
-  }
+  if (!DATA.markets.some(m => m.key === first)) first = store.get("league-tab");
   UI.tab = DATA.markets.some(m => m.key === first) ? first : DATA.markets[0].key;
   render();
 
   let raf = 0;
   const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => views.forEach(v => { if (!v.panel.hidden) drawPanel(v.panel); })); };
+  const relayout = () => {
+    const L = detectLayout();
+    if (L === LAYOUT.now) return redraw();
+    LAYOUT.now = L;
+    render();
+  };
   window.addEventListener("resize", redraw);
-  const mq = window.matchMedia("(prefers-color-scheme: dark)");
-  if (mq.addEventListener) mq.addEventListener("change", redraw);
-  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  for (const q of Object.values(MQ)) q.addEventListener ? q.addEventListener("change", relayout) : q.addListener(relayout);
+  const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+  if (scheme.addEventListener) scheme.addEventListener("change", redraw);
+  /* 보는 곳(앱)이 테마를 바꾸면 따라간다. 여기서 고른 테마가 있으면 그게 이긴다 */
+  new MutationObserver(() => {
+    const now = ROOT.getAttribute("data-theme");
+    if (now !== THEME.expect) {
+      THEME.host = now;
+      if (THEME.mode !== "auto") applyTheme(THEME.mode); else THEME.expect = now;
+    }
+    redraw();
+  }).observe(ROOT, { attributes: true, attributeFilter: ["data-theme"] });
   if (DATA.live_mode) {
     setInterval(refresh, 5000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });

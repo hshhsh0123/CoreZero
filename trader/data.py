@@ -10,6 +10,22 @@ from . import net
 from .config import HISTORY_DAYS, MARKETS
 
 KST = ZoneInfo("Asia/Seoul")
+CONTROL = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u2028\u2029]")
+
+
+def clean_title(t, limit=150):
+    """바깥에서 온 제목을 AI 프롬프트에 넣기 전에 다듬는다. 제어 문자·줄바꿈을 없애고 길이를 자른다."""
+    t = re.sub(r"\s+", " ", CONTROL.sub(" ", html.unescape(str(t or "")))).strip()
+    return t if len(t) <= limit else t[: limit - 1] + "…"
+
+
+def _pct(x):
+    """'0.62%', '0.44', 0.77 같은 퍼센트 값을 소수로. 모르면 None."""
+    try:
+        v = float(str(x).replace("%", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return v / 100 if v >= 0 else None
 
 
 def universe(market):
@@ -50,9 +66,82 @@ def _universe_item(market, board, s):
         "name": s["stockName"],
         "name_en": s.get("stockNameEng", ""),
         "sector": industry.get("industryGroupKor", ""),
+        "sector_code": str(industry.get("code") or ""),   # TRBC 8자리. 앞 6자리가 같으면 같은 업종 묶음
+        "div_yield": _pct(s.get("dividendYield")),
         "board": board,
         "mcap": s.get("marketValueHangeul", ""),
     }
+
+
+def industries():
+    """한국 업종 번호 → 이름. (한 번에 100개까지만 줘서 쪽을 넘기며 받는다)"""
+    out = {}
+    for page in range(1, 6):
+        groups = net.get_json(f"https://m.stock.naver.com/api/stocks/industry?page={page}&pageSize=100").get("groups") or []
+        out.update({str(g["no"]): g["name"] for g in groups if g.get("no") is not None and g.get("name")})
+        if len(groups) < 100:
+            break
+    return out
+
+
+def kr_info(code):
+    """한국 종목 하나의 업종 번호, 배당수익률, 오늘 시가. 모르는 값은 None."""
+    d = net.get_json(f"https://m.stock.naver.com/api/stock/{code}/integration", timeout=10, retries=2)
+    infos = {i.get("code"): i.get("value") for i in d.get("totalInfos") or []}
+    etf = d.get("etfKeyIndicator") or {}
+    y = _pct(infos.get("dividendYieldRatio"))
+    if y is None and etf.get("dividendYieldTtm") is not None:
+        y = _pct(etf["dividendYieldTtm"])
+    try:
+        open_ = float(str(infos.get("openPrice")).replace(",", ""))
+    except (TypeError, ValueError):
+        open_ = None
+    return {"industry": str(d["industryCode"]) if d.get("industryCode") else None, "div_yield": y, "open": open_}
+
+
+def us_info(codes, pages=3):
+    """미국 종목들의 업종, 배당수익률, 오늘 시가. 거래소 시총 순위표를 훑어서 찾는다."""
+    want, out = set(codes), {}
+    for board in ("NASDAQ", "NYSE"):
+        for page in range(1, pages + 1):
+            if want <= set(out):
+                return out
+            try:
+                stocks = net.get_json(
+                    f"https://api.stock.naver.com/stock/exchange/{board}/marketValue?page={page}&pageSize=100"
+                ).get("stocks") or []
+            except Exception as e:
+                print(f"  ! {board} {page}쪽 실패: {e}")
+                break
+            for s in stocks:
+                if s.get("reutersCode") in want:
+                    item = _universe_item("us", board, s)
+                    open_ = s.get("openPriceRaw") or s.get("openPrice")
+                    try:
+                        item["open"] = float(str(open_).replace(",", "")) if open_ else None
+                    except ValueError:
+                        item["open"] = None
+                    out[item["code"]] = item
+            if not stocks:
+                break
+    return out
+
+
+def disclosures(code, n=8):
+    """한국 종목의 거래소 공시(투자경고, 공매도 과열, 거래정지, 배당락 등). 뉴스와 같은 모양으로 돌려준다."""
+    rows = net.get_json(f"https://m.stock.naver.com/api/stock/{code}/disclosure?page=1&pageSize={n}")
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        when = None
+        try:
+            when = datetime.fromisoformat(str(r.get("datetime"))).replace(tzinfo=KST)
+        except ValueError:
+            pass
+        title = clean_title(r.get("title"))
+        if title and r.get("disclosureId") is not None:
+            out.append({"code": code, "key": f"dis:{r['disclosureId']}", "when": when, "title": title,
+                        "source": "거래소 공시", "official": True})
+    return out
 
 
 def bars(market, code, days=HISTORY_DAYS):
@@ -142,8 +231,8 @@ def news(market, code, n=5, before=None):
         out.append(
             {
                 "time": when.strftime("%m-%d %H:%M") if when else "",
-                "title": html.unescape(title).strip(),
-                "source": source,
+                "title": clean_title(title),
+                "source": clean_title(source, 30),
             }
         )
         if len(out) >= n:
@@ -179,7 +268,7 @@ def news_items(market, code, n=8):
             for i in net.get_json(url)
         ]
     items = [
-        {"code": code, "key": key, "when": _parse_stamp(stamp), "title": html.unescape(title).strip(), "source": source}
+        {"code": code, "key": key, "when": _parse_stamp(stamp), "title": clean_title(title), "source": clean_title(source, 30)}
         for key, stamp, title, source in raw
         if title
     ]
@@ -187,8 +276,9 @@ def news_items(market, code, n=8):
     return items
 
 
-def news_many(market, codes, n=8, workers=8):
-    """여러 피드를 병렬로. codes 순서를 유지한다. 실패한 피드는 빠진다."""
+def news_many(market, codes, n=8, workers=8, disclosure_codes=()):
+    """여러 피드를 병렬로. codes 순서를 유지한다. 실패한 피드는 빠진다.
+    한국은 disclosure_codes 종목의 거래소 공시도 같이 가져온다 (보유 종목 피드보다 뒤에 붙는다)."""
 
     def one(code):
         try:
@@ -197,8 +287,18 @@ def news_many(market, codes, n=8, workers=8):
             print(f"  ! {code} 뉴스 실패: {e}")
             return []
 
+    def dis(code):
+        try:
+            return disclosures(code)
+        except Exception as e:
+            print(f"  ! {code} 공시 실패: {e}")
+            return []
+
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        return [it for items in ex.map(one, codes) for it in items]
+        out = [it for items in ex.map(one, codes) for it in items]
+        if market == "kr":
+            out += [it for items in ex.map(dis, disclosure_codes) for it in items]
+    return out
 
 
 FUNDAMENTAL_KEYS = {
