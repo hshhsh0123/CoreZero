@@ -1,0 +1,644 @@
+<title>AI vs 원숭이 vs 존버</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 레이아웃: 스코어보드 한 장. 리그 탭 → 순위표 → 수익률 레이스 → AI의 한 수 → 보유 종목 → 매매 기록 → 지난 판단 → 규칙 */
+:root {
+  --page: #f4f5f8;
+  --surface: #fcfcfd;
+  --surface-2: #eceef3;
+  --ink: #0f1419;
+  --ink-2: #4b5563;
+  --muted: #6b7280;
+  --grid: #e6e8ed;
+  --axis: #c5cad3;
+  --hair: rgba(15, 20, 25, 0.10);
+  --up: #c62f2f;          /* 한국식: 오르면 빨강 */
+  --down: #1c5cab;        /* 내리면 파랑 */
+  --p-ai: #4a3aa7;
+  --p-monkey: #eb6834;
+  --p-hodl: #1baf7a;
+  --shadow: 0 6px 20px rgba(15, 20, 25, 0.10);
+  --font-display: "Black Han Sans", "IBM Plex Sans KR", system-ui, sans-serif;
+  --font-ui: "IBM Plex Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0e1116; --surface: #161a21; --surface-2: #212732; --ink: #eef1f5; --ink-2: #b4bcc8;
+    --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10);
+    --up: #ff7a7a; --down: #6da7ec; --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
+    --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0e1116; --surface: #161a21; --surface-2: #212732; --ink: #eef1f5; --ink-2: #b4bcc8;
+  --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10);
+  --up: #ff7a7a; --down: #6da7ec; --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.6; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+p { margin: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink-2); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 20px; }
+
+.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; }
+.brand { display: grid; gap: 8px; min-width: 0; max-width: 640px; }
+.wordmark { font-family: var(--font-display); font-weight: 400; font-size: clamp(30px, 6.4vw, 46px); line-height: 1.15; letter-spacing: -0.005em; }
+.wordmark .team { text-decoration: underline; text-decoration-thickness: 0.11em; text-underline-offset: 0.16em; }
+.wordmark .vs { font-size: 0.55em; color: var(--muted); padding-inline: 0.12em; vertical-align: 0.18em; }
+.tagline { color: var(--ink-2); max-width: 60ch; }
+.stamp { color: var(--muted); font-size: 13px; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hair); overflow-x: auto; }
+.tab { background: none; border: 0; padding: 10px 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tab:hover { color: var(--ink); }
+
+.panel { display: grid; gap: 20px; }
+.status { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; color: var(--ink-2); font-size: 13px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink); font-size: 12.5px; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.chip.live::before { background: var(--up); }
+
+.headline { font-size: clamp(18px, 3.2vw, 22px); font-weight: 600; line-height: 1.45; }
+.headline .soft { color: var(--ink-2); font-weight: 500; }
+
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: 12px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+.card-head { display: grid; gap: 4px; }
+.card-head h2 { font-size: 17px; font-weight: 700; }
+.sub { color: var(--muted); font-size: 13px; }
+
+.standings { list-style: none; margin: 0; padding: 0; display: grid; }
+.row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 150px 150px 120px 64px; gap: 12px; align-items: center; padding: 14px 12px; border-top: 1px solid var(--hair); }
+.row:first-child { border-top: 0; }
+.row.lead { background: var(--surface-2); border-radius: 10px; border-top-color: transparent; }
+.row.lead + .row { border-top-color: transparent; }
+.rank { font-family: var(--font-display); font-size: 22px; color: var(--muted); text-align: center; }
+.row.lead .rank { color: var(--ink); }
+.who { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; min-width: 0; }
+.key { width: 14px; height: 14px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--surface); }
+.name { font-weight: 700; font-size: 16px; }
+.blurb { grid-column: 2; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.ret { font-size: 26px; font-weight: 600; line-height: 1.1; white-space: nowrap; }
+.stat { display: grid; gap: 2px; font-size: 14px; white-space: nowrap; }
+.stat .k { color: var(--muted); font-size: 12px; }
+.delta.up { color: var(--up); }
+.delta.down { color: var(--down); }
+.delta.flat { color: var(--muted); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 16px; height: 2px; border-radius: 1px; background: var(--c); }
+.chart { position: relative; min-height: 120px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg:focus-visible { outline-offset: 4px; }
+.tick { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.endlabel { font-size: 12px; fill: var(--ink-2); }
+.endlabel .v { fill: var(--ink); font-weight: 600; }
+.empty { display: grid; gap: 4px; place-content: center; text-align: center; min-height: 180px; padding: 16px; border: 1px dashed var(--axis); border-radius: 10px; color: var(--ink-2); }
+.empty strong { color: var(--ink); }
+
+details > summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; font-weight: 600; width: fit-content; }
+details > summary:hover { color: var(--ink); }
+.scroll { overflow-x: auto; margin-top: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.side.buy { color: var(--up); font-weight: 600; }
+.side.sell { color: var(--down); font-weight: 600; }
+
+.view { border-left: 3px solid var(--p-ai); padding: 2px 0 2px 14px; color: var(--ink); font-size: 15.5px; max-width: 70ch; }
+.picks { list-style: none; margin: 0; padding: 0; display: grid; }
+.pick { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 4px 20px; padding: 14px 0; border-top: 1px solid var(--hair); }
+.pick:first-child { border-top: 0; padding-top: 4px; }
+.pick-name { font-weight: 700; }
+.pick-name .code { color: var(--muted); font-weight: 400; font-size: 12.5px; margin-left: 6px; }
+.pick-why { grid-column: 1 / -1; color: var(--ink-2); font-size: 14px; max-width: 75ch; }
+.wbar { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 10px; align-items: center; }
+.track { height: 8px; background: var(--surface-2); border-radius: 0 4px 4px 0; }
+.fill { display: block; height: 100%; background: var(--p-ai); border-radius: 0 4px 4px 0; }
+.wbar .pctv { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.pick.cash .pick-name { color: var(--ink-2); }
+.pick.cash .fill { background: var(--axis); }
+.meta { color: var(--muted); font-size: 12.5px; }
+.shortlist { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
+.shortlist b { color: var(--ink); font-weight: 600; }
+.error { color: var(--up); }
+
+.holdings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.hcol { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.hhead { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.hhead .eqv { margin-left: auto; font-weight: 500; color: var(--ink-2); font-size: 13.5px; }
+.hlist { list-style: none; margin: 0; padding: 0; display: grid; }
+.hitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; padding: 8px 0; border-top: 1px solid var(--hair); font-size: 14px; }
+.hitem .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hitem .w { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
+.hitem .d { grid-column: 1 / -1; display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.hnote { color: var(--muted); font-size: 13px; }
+
+.entries { display: grid; gap: 8px; }
+.entry { border-top: 1px solid var(--hair); padding-top: 10px; }
+.entry > div { display: grid; gap: 10px; margin-top: 10px; }
+
+.foot { display: grid; gap: 10px; color: var(--ink-2); font-size: 13.5px; }
+.foot h2 { font-size: 15px; color: var(--ink); }
+.foot ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 80ch; }
+.foot .disclaimer { color: var(--muted); }
+
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); border: 1px solid var(--hair); border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 13px; min-width: 190px; display: grid; gap: 6px; }
+.tip .t-date { color: var(--muted); font-size: 12px; }
+.tip .t-row { display: grid; grid-template-columns: 14px auto 1fr; gap: 8px; align-items: center; }
+.tip .t-row i { width: 14px; height: 2px; border-radius: 1px; background: var(--c); }
+.tip .t-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tip .t-row span { color: var(--ink-2); text-align: right; }
+
+@media (max-width: 860px) {
+  .row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "rank who ret" ". eq today" ". trades trades"; row-gap: 8px; }
+  .rank { grid-area: rank; }
+  .who { grid-area: who; }
+  .ret { grid-area: ret; text-align: right; font-size: 22px; }
+  .row .stat.eq { grid-area: eq; }
+  .row .stat.today { grid-area: today; text-align: right; }
+  .row .stat.trades { grid-area: trades; display: none; }
+  .holdings { grid-template-columns: minmax(0, 1fr); }
+  .pick { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1 class="wordmark"><span class="team" style="text-decoration-color: var(--p-ai)">AI</span><span class="vs">vs</span><span class="team" style="text-decoration-color: var(--p-monkey)">원숭이</span><span class="vs">vs</span><span class="team" style="text-decoration-color: var(--p-hodl)">존버</span></h1>
+      <p class="tagline">DeepSeek이 직접 고른 종목으로 가짜 돈을 굴려요. 랜덤으로 찍는 원숭이, 지수만 사서 들고 있는 존버를 이길 수 있을까요?</p>
+    </div>
+    <p class="stamp" id="stamp"></p>
+  </header>
+  <nav class="tabs" role="tablist" id="tabs" aria-label="시장"></nav>
+  <main id="panels"></main>
+  <footer class="foot card" id="rules"></footer>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const COLOR = { ai: "--p-ai", monkey: "--p-monkey", hodl: "--p-hodl" };
+const SHORT = { ai: "AI", monkey: "원숭이", hodl: "존버" };
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+function sv(tag, attrs, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid != null) el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function krwShort(x) {
+  const sign = x < 0 ? "-" : "";
+  x = Math.abs(Math.round(x));
+  const eok = Math.floor(x / 1e8), man = Math.floor((x % 1e8) / 1e4);
+  if (eok && man) return `${sign}${eok}억 ${man.toLocaleString("ko-KR")}만원`;
+  if (eok) return `${sign}${eok}억원`;
+  if (man) return `${sign}${man.toLocaleString("ko-KR")}만원`;
+  return `${sign}${x.toLocaleString("ko-KR")}원`;
+}
+function money(x, cur, full) {
+  if (cur === "KRW") return full ? `${Math.round(x).toLocaleString("ko-KR")}원` : krwShort(x);
+  const d = full ? 2 : 0;
+  return (x < 0 ? "-$" : "$") + Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function price(x, cur) {
+  return cur === "KRW"
+    ? Math.round(x).toLocaleString("ko-KR")
+    : x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pct(r, d = 2) {
+  const v = r * 100;
+  if (Math.abs(v) < 0.5 * 10 ** -d) return (0).toFixed(d) + "%";
+  return (v > 0 ? "+" : "") + v.toFixed(d) + "%";
+}
+function dir(r) { return Math.abs(r) < 5e-5 ? "flat" : r > 0 ? "up" : "down"; }
+function delta(r, d = 2) {
+  const k = dir(r);
+  return h("span", { class: `delta ${k}` }, k === "up" ? "▲ " : k === "down" ? "▼ " : "", pct(r, d));
+}
+function day(d) { if (!d) return "-"; const [, m, dd] = d.split("-"); return `${+m}월 ${+dd}일`; }
+function shortDay(d) { const [, m, dd] = d.split("-"); return `${+m}/${+dd}`; }
+function stampText(iso) {
+  return new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+function blurb(p, m) {
+  if (p.key === "ai") return `시총 상위 ${m.universe}개 후보에서 직접 골라 비중을 정해요`;
+  if (p.key === "monkey") return `${DATA.rules.monkey_picks}종목을 무작위로 찍고 결정 ${DATA.rules.monkey_every}번마다 갈아엎어요`;
+  return `${m.benchmark}를 사서 끝까지 들고 가요`;
+}
+
+/* ---------- 순위표 ---------- */
+function headline(m) {
+  const ranked = [...m.players].sort((a, b) => b.ret - a.ret);
+  const ai = m.players.find(p => p.key === "ai");
+  const hodl = m.players.find(p => p.key === "hodl");
+  if (m.players.every(p => dir(p.ret) === "flat" && p.n_trades === 0)) {
+    return h("p", { class: "headline" }, "아직 아무도 안 움직였어요. ",
+      h("span", { class: "soft" }, m.pending ? `${day(m.pending.decided_on)} 종가 보고 정한 첫 주문이 다음 장 시가에 체결돼요.` : "첫 결정을 기다리는 중이에요."));
+  }
+  const lead = ranked[0];
+  const gap = ai.ret - hodl.ret;
+  const gapText = Math.abs(gap) < 5e-5 ? "AI랑 존버는 동점이에요." : `AI는 존버보다 ${Math.abs(gap * 100).toFixed(2)}%p ${gap > 0 ? "앞서 있어요." : "뒤처져 있어요."}`;
+  return h("p", { class: "headline" }, `지금 1등은 ${lead.label} (${pct(lead.ret)}). `, h("span", { class: "soft" }, gapText));
+}
+
+function standings(m) {
+  const ranked = [...m.players].sort((a, b) => b.ret - a.ret);
+  const tie = ranked.every(p => Math.abs(p.ret - ranked[0].ret) < 5e-5);
+  const todayKey = m.live.provisional ? "오늘 (장중)" : "직전 거래일 대비";
+  return h("ol", { class: "standings", "aria-label": "리그 순위" }, ranked.map((p, i) =>
+    h("li", { class: `row${i === 0 && !tie ? " lead" : ""}` },
+      h("span", { class: "rank", "aria-label": tie ? "공동" : `${i + 1}위` }, tie ? "–" : String(i + 1)),
+      h("span", { class: "who" },
+        h("i", { class: "key", style: `--c: var(${COLOR[p.key]})` }),
+        h("span", { class: "name" }, p.label),
+        h("span", { class: "blurb" }, blurb(p, m))),
+      h("span", { class: "ret" }, delta(p.ret)),
+      h("span", { class: "stat eq" }, h("span", { class: "k" }, "평가금액"), money(p.equity, m.currency)),
+      h("span", { class: "stat today" }, h("span", { class: "k" }, todayKey), delta(p.today)),
+      h("span", { class: "stat trades" }, h("span", { class: "k" }, "매매"), `${p.n_trades}건`))));
+}
+
+/* ---------- 수익률 레이스 ---------- */
+function seriesOf(m) {
+  return m.players.map(p => {
+    const pts = p.history.map(x => ({ date: x.date, ret: x.ret, eq: x.equity, live: false }));
+    if (m.live.provisional) pts.push({ date: m.live.date, ret: p.ret, eq: p.equity, live: true });
+    return { key: p.key, label: p.label, pts };
+  });
+}
+function niceTicks(lo, hi, count) {
+  const span = hi - lo;
+  const raw = span / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(st => span / st <= count) || 10 * mag;
+  const out = [];
+  for (let v = Math.floor(lo / step) * step; v <= Math.ceil(hi / step) * step + step / 2; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function tickText(v) {
+  const t = (v * 100).toFixed(2).replace(/\.?0+$/, "");
+  return (v > 0 ? "+" : "") + (t === "-0" ? "0" : t) + "%";
+}
+
+function drawChart(host, m) {
+  host.textContent = "";
+  const ser = seriesOf(m);
+  const n = Math.max(...ser.map(s => s.pts.length));
+  if (n < 2) {
+    host.append(h("div", { class: "empty" },
+      h("strong", {}, "아직 그릴 선이 없어요"),
+      h("span", {}, "첫 거래일이 끝나면 여기서 셋의 수익률이 경주를 시작해요.")));
+    return;
+  }
+  const W = Math.max(host.clientWidth, 280);
+  const dates = ser[0].pts.map(p => p.date);
+  const vals = ser.flatMap(s => s.pts.map(p => p.ret)).concat(0);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 0.004) { const mid = (hi + lo) / 2; lo = mid - 0.002; hi = mid + 0.002; }
+  const ticks = niceTicks(lo, hi, 5);
+  lo = ticks[0]; hi = ticks[ticks.length - 1];
+
+  const PH = W < 520 ? 200 : 250, padT = 12, padB = 30, padL = 54;
+  const ends = ser.map(s => ({ key: s.key, v: s.pts[s.pts.length - 1].ret }));
+  const yOf = v => padT + PH * (hi - v) / (hi - lo);
+  const sortedY = ends.map(e => yOf(e.v)).sort((a, b) => a - b);
+  const labelsFit = W >= 420 && sortedY.every((y, i) => i === 0 || y - sortedY[i - 1] >= 16);
+  const padR = labelsFit ? 104 : 14;
+  const plotW = W - padL - padR;
+  const xOf = i => padL + plotW * (i / (n - 1));
+  const H = padT + PH + padB;
+
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", tabindex: "0",
+    "aria-label": "수익률 레이스. " + ser.map(s => `${SHORT[s.key]} ${pct(s.pts[s.pts.length - 1].ret)}`).join(", ") });
+
+  for (const t of ticks) {
+    const y = yOf(t);
+    svg.append(sv("line", { x1: padL, x2: padL + plotW, y1: y, y2: y, stroke: t === 0 ? cssVar("--axis") : cssVar("--grid"), "stroke-width": 1, "shape-rendering": "crispEdges" }));
+    svg.append(sv("text", { x: padL - 8, y: y + 4, "text-anchor": "end", class: "tick" }, tickText(t)));
+  }
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(plotW / 70))));
+  dates.forEach((d, i) => {
+    if (i % every !== 0 && i !== n - 1) return;
+    if (i !== n - 1 && n - 1 - i < every) return;
+    const live = ser[0].pts[i].live;
+    svg.append(sv("text", { x: xOf(i), y: padT + PH + 20, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle", class: "tick" }, live ? "지금" : shortDay(d)));
+  });
+
+  const surface = cssVar("--surface");
+  for (const s of ser) {
+    const color = cssVar(COLOR[s.key]);
+    const solid = s.pts.filter(p => !p.live);
+    const dSolid = solid.map((p, i) => `${i ? "L" : "M"}${xOf(i).toFixed(1)},${yOf(p.ret).toFixed(1)}`).join("");
+    if (solid.length > 1) svg.append(sv("path", { d: dSolid, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const last = s.pts[s.pts.length - 1];
+    if (last.live && solid.length) {
+      const a = solid.length - 1;
+      svg.append(sv("path", { d: `M${xOf(a)},${yOf(solid[a].ret)}L${xOf(n - 1)},${yOf(last.ret)}`, fill: "none", stroke: color, "stroke-width": 2, "stroke-dasharray": "4 4", "stroke-linecap": "round" }));
+    }
+    svg.append(sv("circle", { cx: xOf(n - 1), cy: yOf(last.ret), r: 4, fill: last.live ? surface : color, stroke: last.live ? color : surface, "stroke-width": 2 }));
+    if (labelsFit) {
+      svg.append(sv("text", { x: xOf(n - 1) + 10, y: yOf(last.ret) + 4, class: "endlabel" },
+        SHORT[s.key] + " ", sv("tspan", { class: "v" }, pct(last.ret))));
+    }
+  }
+
+  const cross = sv("line", { y1: padT, y2: padT + PH, stroke: cssVar("--axis"), "stroke-width": 1, visibility: "hidden" });
+  const dots = ser.map(s => sv("circle", { r: 4, fill: cssVar(COLOR[s.key]), stroke: surface, "stroke-width": 2, visibility: "hidden" }));
+  svg.append(cross, ...dots);
+  host.append(svg);
+
+  const tip = document.getElementById("tip");
+  let cur = n - 1;
+  function show(i, cx, cy) {
+    cur = i;
+    const x = xOf(i);
+    cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+    ser.forEach((s, k) => {
+      const p = s.pts[i];
+      dots[k].setAttribute("cx", x); dots[k].setAttribute("cy", yOf(p.ret)); dots[k].setAttribute("visibility", "visible");
+    });
+    tip.textContent = "";
+    const live = ser[0].pts[i].live;
+    tip.append(h("div", { class: "t-date" }, day(dates[i]) + (live ? " · 장중" : " 종가")));
+    [...ser].sort((a, b) => b.pts[i].ret - a.pts[i].ret).forEach(s => {
+      const p = s.pts[i];
+      tip.append(h("div", { class: "t-row" }, h("i", { style: `--c: var(${COLOR[s.key]})` }), h("b", {}, pct(p.ret)), h("span", {}, `${SHORT[s.key]} · ${money(p.eq, m.currency)}`)));
+    });
+    tip.hidden = false;
+    const r = tip.getBoundingClientRect();
+    let left = cx + 16, top = cy + 16;
+    if (left + r.width > window.innerWidth - 8) left = cx - r.width - 16;
+    if (top + r.height > window.innerHeight - 8) top = cy - r.height - 16;
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, top) + "px";
+  }
+  function hide() {
+    cross.setAttribute("visibility", "hidden");
+    dots.forEach(d => d.setAttribute("visibility", "hidden"));
+    tip.hidden = true;
+  }
+  svg.addEventListener("pointermove", e => {
+    const box = svg.getBoundingClientRect();
+    const px = (e.clientX - box.left) * (W / box.width);
+    const i = Math.min(n - 1, Math.max(0, Math.round((px - padL) / plotW * (n - 1))));
+    show(i, e.clientX, e.clientY);
+  });
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("blur", hide);
+  const showAtCursor = () => {
+    const box = svg.getBoundingClientRect();
+    show(cur, box.left + xOf(cur) * (box.width / W), box.top + yOf(ser[0].pts[cur].ret) * (box.height / H));
+  };
+  svg.addEventListener("focus", showAtCursor);
+  svg.addEventListener("keydown", e => {
+    if (e.key === "ArrowLeft") cur = Math.max(0, cur - 1);
+    else if (e.key === "ArrowRight") cur = Math.min(n - 1, cur + 1);
+    else if (e.key === "Escape") return hide();
+    else return;
+    e.preventDefault();
+    showAtCursor();
+  });
+}
+
+function raceCard(m) {
+  const host = h("div", { class: "chart" });
+  const ser = seriesOf(m);
+  const rows = ser[0].pts.map((p, i) => h("tr", {},
+    h("td", {}, day(p.date) + (p.live ? " (장중)" : "")),
+    ser.map(s => h("td", { class: "num" }, pct(s.pts[i].ret), " · ", money(s.pts[i].eq, m.currency)))));
+  const card = h("section", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "수익률 레이스"),
+      h("p", { class: "sub" }, "시작일을 0%로 놓고 거래일마다 종가 기준으로 그려요." + (m.live.provisional ? " 점선 끝은 아직 장이 안 끝난 지금 가격이에요." : ""))),
+    h("div", { class: "legend" }, m.players.map(p => h("span", {}, h("i", { style: `--c: var(${COLOR[p.key]})` }), p.label))),
+    host,
+    h("details", {},
+      h("summary", {}, "표로 보기"),
+      h("div", { class: "scroll" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "날짜"), ser.map(s => h("th", { class: "num" }, s.label)))),
+        h("tbody", {}, rows.reverse())))));
+  card._draw = () => drawChart(host, m);
+  return card;
+}
+
+/* ---------- AI의 한 수 ---------- */
+function decisionBody(j, m, compact) {
+  const body = [];
+  if (j.error) body.push(h("p", { class: "error" }, `이날은 AI 호출이 실패해서 매매를 쉬었어요: ${j.error}`));
+  if (j.market_view) body.push(h("p", { class: "view" }, j.market_view));
+  if (j.targets) {
+    const total = j.targets.reduce((a, t) => a + t.weight, 0);
+    const scale = DATA.rules.max_weight;
+    const items = j.targets.map(t => h("li", { class: "pick" },
+      h("span", { class: "pick-name" }, t.name, h("span", { class: "code" }, t.code)),
+      h("span", { class: "wbar" }, h("span", { class: "track" }, h("span", { class: "fill", style: `width: ${Math.min(100, t.weight / scale * 100)}%` })), h("span", { class: "pctv" }, `${Math.round(t.weight * 100)}%`)),
+      t.reason && h("p", { class: "pick-why" }, t.reason)));
+    const cash = Math.max(0, 1 - total);
+    items.push(h("li", { class: "pick cash" },
+      h("span", { class: "pick-name" }, "현금"),
+      h("span", { class: "wbar" }, h("span", { class: "track" }, h("span", { class: "fill", style: `width: ${Math.min(100, cash / scale * 100)}%` })), h("span", { class: "pctv" }, `${Math.round(cash * 100)}%`)),
+      j.cash_reason && h("p", { class: "pick-why" }, j.cash_reason)));
+    body.push(h("ul", { class: "picks" }, items));
+  }
+  if (!compact && j.shortlist && j.shortlist.length) {
+    body.push(h("details", {},
+      h("summary", {}, `1단계에서 추린 후보 ${j.shortlist.length}개 보기`),
+      j.scout_view && h("p", { class: "meta", style: "margin-top: 10px" }, j.scout_view),
+      h("ul", { class: "shortlist" }, j.shortlist.map(s => h("li", {}, h("b", {}, s.name), ` ${s.why}`)))));
+  }
+  const tokens = j.usage ? Object.values(j.usage).reduce((a, u) => a + ((u && u.total_tokens) || 0), 0) : 0;
+  const bits = [];
+  if (j.model) bits.push(`모델 ${j.model}`);
+  if (tokens) bits.push(`토큰 ${tokens.toLocaleString("ko-KR")}개`);
+  if (j.monkey) bits.push(`같은 날 원숭이 다트: ${j.monkey.join(", ")}`);
+  if (bits.length) body.push(h("p", { class: "meta" }, bits.join(" · ")));
+  return body;
+}
+
+function decisionCard(m) {
+  const j = m.journal[0];
+  if (!j) return null;
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "AI의 한 수"),
+      h("p", { class: "sub" }, `${day(j.date)} 종가까지 보고 정한 목표 비중이에요. 주문은 다음 거래일 시가에 체결돼요.`)),
+    decisionBody(j, m, false));
+}
+
+function journalCard(m) {
+  const past = m.journal.slice(1);
+  if (!past.length) return null;
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "지난 판단"), h("p", { class: "sub" }, "AI가 날마다 뭘 보고 뭘 샀는지 남겨둔 기록이에요.")),
+    h("div", { class: "entries" }, past.map(j => h("details", { class: "entry" },
+      h("summary", {}, `${day(j.date)} 결정 · ${j.targets ? j.targets.map(t => t.name).slice(0, 4).join(", ") + (j.targets.length > 4 ? ` 외 ${j.targets.length - 4}개` : "") : "매매 없음"}`),
+      h("div", {}, decisionBody(j, m, true))))));
+}
+
+/* ---------- 보유 종목 ---------- */
+function holdingsCard(m) {
+  const cols = m.players.map(p => {
+    const items = p.positions.map(x => h("li", { class: "hitem" },
+      h("span", { class: "n", title: x.name }, x.name),
+      h("span", { class: "w" }, `${(x.weight * 100).toFixed(1)}%`),
+      h("span", { class: "d" }, h("span", {}, `${x.shares.toLocaleString("ko-KR")}주 · 평단 ${price(x.avg, m.currency)}`), delta(x.pnl))));
+    items.push(h("li", { class: "hitem" },
+      h("span", { class: "n" }, "현금"),
+      h("span", { class: "w" }, `${(p.cash / p.equity * 100).toFixed(1)}%`),
+      h("span", { class: "d" }, h("span", {}, money(p.cash, m.currency, true)), h("span", {}))));
+    return h("div", { class: "hcol" },
+      h("div", { class: "hhead" }, h("i", { class: "key", style: `--c: var(${COLOR[p.key]})` }), p.label, h("span", { class: "eqv" }, money(p.equity, m.currency))),
+      p.positions.length ? null : h("p", { class: "hnote" }, m.pending ? "첫 주문이 체결되길 기다리는 중이에요." : "보유 종목이 없어요."),
+      h("ul", { class: "hlist" }, items));
+  });
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "보유 종목"), h("p", { class: "sub" }, "비중과 평단 대비 수익률이에요. 가격은 마지막으로 받아온 시세 기준이에요.")),
+    h("div", { class: "holdings" }, cols));
+}
+
+/* ---------- 매매 기록 ---------- */
+function tradesCard(m) {
+  const all = m.players.flatMap(p => p.trades.map(t => ({ ...t, who: p.key })))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 40);
+  if (!all.length) return null;
+  const fees = m.players.map(p => `${SHORT[p.key]} ${money(p.fees, m.currency, true)}`).join(" · ");
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "매매 기록"), h("p", { class: "sub" }, `최근 ${all.length}건. 지금까지 낸 수수료·세금: ${fees}`)),
+    h("div", { class: "scroll" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}, "체결일"), h("th", {}, "선수"), h("th", {}, "구분"), h("th", {}, "종목"), h("th", { class: "num" }, "수량"), h("th", { class: "num" }, "체결가"), h("th", { class: "num" }, "비용"))),
+      h("tbody", {}, all.map(t => h("tr", {},
+        h("td", {}, day(t.date)),
+        h("td", {}, SHORT[t.who]),
+        h("td", {}, h("span", { class: `side ${t.side}` }, t.side === "buy" ? "매수" : "매도")),
+        h("td", {}, t.name),
+        h("td", { class: "num" }, t.shares.toLocaleString("ko-KR")),
+        h("td", { class: "num" }, price(t.price, m.currency)),
+        h("td", { class: "num" }, money(t.cost, m.currency, true))))))));
+}
+
+/* ---------- 규칙 ---------- */
+function rulesFooter() {
+  const r = DATA.rules;
+  const caps = DATA.markets.map(m => `${m.name} ${money(m.capital, m.currency)}`).join(", ");
+  const costs = DATA.markets.map(m => `${m.name}은 수수료 ${(m.fee * 100).toFixed(3).replace(/0+$/, "")}%` + (m.sell_tax ? `에 매도세 ${(m.sell_tax * 100).toFixed(2)}%` : "")).join(", ");
+  const univ = DATA.markets.map(m => `${m.name} ${m.universe}개`).join(", ");
+  const benches = DATA.markets.map(m => m.benchmark).join(", ");
+  const box = document.getElementById("rules");
+  box.append(
+    h("h2", {}, "규칙"),
+    h("ul", {},
+      h("li", {}, `셋 다 같은 돈으로 시작해요: ${caps}.`),
+      h("li", {}, "결정은 장이 끝나 확정된 종가까지의 데이터로 하고, 주문은 다음 거래일 시가에 체결돼요. 장중에 결정하면 그날 장 시작 전 뉴스까지만 봐요."),
+      h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스와 지표를 읽고 최대 ${r.max_positions}종목을 종목당 ${Math.round(r.min_weight * 100)}~${Math.round(r.max_weight * 100)}% 비중으로 정해요.`),
+      h("li", {}, `원숭이는 같은 후보에서 ${r.monkey_picks}종목을 무작위로 골라 똑같이 나눠 사고, 결정 ${r.monkey_every}번마다 새로 찍어요.`),
+      h("li", {}, `존버는 첫날 ${benches}를 사서 계속 들고 가요.`),
+      h("li", {}, `비용은 ${costs}로 계산해요. 대략적인 가정값이에요.`),
+      h("li", {}, "시세와 뉴스는 네이버 증권에서 받아와요.")),
+    h("p", { class: "disclaimer" }, "전부 가짜 돈으로 하는 실험이에요. 여기 나온 종목은 투자 추천이 아니에요."));
+}
+
+/* ---------- 조립 ---------- */
+function renderMarket(m) {
+  const panel = h("section", { class: "panel", id: `panel-${m.key}`, role: "tabpanel", "aria-labelledby": `tab-${m.key}` });
+  const status = h("div", { class: "status" },
+    h("span", {}, m.sessions ? `리그 ${m.sessions}일째` : "개막일"),
+    h("span", {}, `${day(m.started)} 종가 기준 출발`),
+    m.pending && h("span", { class: "chip" }, `주문 대기: ${day(m.pending.decided_on)} 결정분, 다음 장 시가에 체결`),
+    m.live.provisional && h("span", { class: "chip live" }, `${day(m.live.date)} 장중 가격 반영`));
+  const race = raceCard(m);
+  panel.append(
+    status,
+    headline(m),
+    h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "리그 순위")), standings(m)),
+    race,
+    decisionCard(m) || "",
+    holdingsCard(m),
+    tradesCard(m) || "",
+    journalCard(m) || "");
+  panel._race = race;
+  return panel;
+}
+
+function boot() {
+  const tabs = document.getElementById("tabs");
+  const panels = document.getElementById("panels");
+  if (!DATA || !DATA.markets.length) {
+    panels.append(h("p", { class: "headline" }, "아직 리그 기록이 없어요. python -m trader run 을 먼저 돌려주세요."));
+    return;
+  }
+  const latest = DATA.markets.map(m => m.updated_at).filter(Boolean).sort().pop();
+  document.getElementById("stamp").textContent = latest ? `마지막 업데이트 ${stampText(latest)} (한국시간)` : "";
+  const views = DATA.markets.map(m => ({ m, panel: renderMarket(m) }));
+  const buttons = views.map(({ m }) => h("button", { class: "tab", role: "tab", id: `tab-${m.key}`, "aria-controls": `panel-${m.key}`, type: "button" }, `${m.name} 리그`));
+  tabs.append(...buttons);
+  views.forEach(v => panels.append(v.panel));
+
+  function select(key, focus) {
+    views.forEach(({ m, panel }, i) => {
+      const on = m.key === key;
+      panel.hidden = !on;
+      buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+      buttons[i].tabIndex = on ? 0 : -1;
+      if (on) { panel._race._draw(); if (focus) buttons[i].focus(); }
+    });
+    try { localStorage.setItem("league-tab", key); } catch (e) {}
+    if (location.hash !== `#${key}`) history.replaceState(null, "", `#${key}`);
+  }
+  buttons.forEach((b, i) => {
+    b.addEventListener("click", () => select(views[i].m.key));
+    b.addEventListener("keydown", e => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      select(views[(i + d + views.length) % views.length].m.key, true);
+    });
+  });
+  let first = location.hash.slice(1);
+  if (!views.some(v => v.m.key === first)) {
+    try { first = localStorage.getItem("league-tab"); } catch (e) { first = null; }
+  }
+  if (!views.some(v => v.m.key === first)) first = views[0].m.key;
+  select(first);
+
+  let raf = 0;
+  const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => views.forEach(v => { if (!v.panel.hidden) v.panel._race._draw(); })); };
+  window.addEventListener("resize", redraw);
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) mq.addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  rulesFooter();
+}
+boot();
+</script>

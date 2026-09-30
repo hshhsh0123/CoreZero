@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>AI vs 원숭이 vs 존버</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 레이아웃: 스코어보드 한 장. 리그 탭 → 순위표 → 수익률 레이스 → AI의 한 수 → 보유 종목 → 매매 기록 → 지난 판단 → 규칙 */
+:root {
+  --page: #f4f5f8;
+  --surface: #fcfcfd;
+  --surface-2: #eceef3;
+  --ink: #0f1419;
+  --ink-2: #4b5563;
+  --muted: #6b7280;
+  --grid: #e6e8ed;
+  --axis: #c5cad3;
+  --hair: rgba(15, 20, 25, 0.10);
+  --up: #c62f2f;          /* 한국식: 오르면 빨강 */
+  --down: #1c5cab;        /* 내리면 파랑 */
+  --p-ai: #4a3aa7;
+  --p-monkey: #eb6834;
+  --p-hodl: #1baf7a;
+  --shadow: 0 6px 20px rgba(15, 20, 25, 0.10);
+  --font-display: "Black Han Sans", "IBM Plex Sans KR", system-ui, sans-serif;
+  --font-ui: "IBM Plex Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0e1116; --surface: #161a21; --surface-2: #212732; --ink: #eef1f5; --ink-2: #b4bcc8;
+    --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10);
+    --up: #ff7a7a; --down: #6da7ec; --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
+    --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0e1116; --surface: #161a21; --surface-2: #212732; --ink: #eef1f5; --ink-2: #b4bcc8;
+  --muted: #8a93a3; --grid: #262c36; --axis: #3a4250; --hair: rgba(255, 255, 255, 0.10);
+  --up: #ff7a7a; --down: #6da7ec; --p-ai: #9085e9; --p-monkey: #d95926; --p-hodl: #199e70;
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.6; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+p { margin: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink-2); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 20px; }
+
+.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; }
+.brand { display: grid; gap: 8px; min-width: 0; max-width: 640px; }
+.wordmark { font-family: var(--font-display); font-weight: 400; font-size: clamp(30px, 6.4vw, 46px); line-height: 1.15; letter-spacing: -0.005em; }
+.wordmark .team { text-decoration: underline; text-decoration-thickness: 0.11em; text-underline-offset: 0.16em; }
+.wordmark .vs { font-size: 0.55em; color: var(--muted); padding-inline: 0.12em; vertical-align: 0.18em; }
+.tagline { color: var(--ink-2); max-width: 60ch; }
+.stamp { color: var(--muted); font-size: 13px; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hair); overflow-x: auto; }
+.tab { background: none; border: 0; padding: 10px 14px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tab:hover { color: var(--ink); }
+
+.panel { display: grid; gap: 20px; }
+.status { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; color: var(--ink-2); font-size: 13px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink); font-size: 12.5px; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.chip.live::before { background: var(--up); }
+
+.headline { font-size: clamp(18px, 3.2vw, 22px); font-weight: 600; line-height: 1.45; }
+.headline .soft { color: var(--ink-2); font-weight: 500; }
+
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: 12px; padding: 20px; display: grid; gap: 16px; min-width: 0; }
+.card-head { display: grid; gap: 4px; }
+.card-head h2 { font-size: 17px; font-weight: 700; }
+.sub { color: var(--muted); font-size: 13px; }
+
+.standings { list-style: none; margin: 0; padding: 0; display: grid; }
+.row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 150px 150px 120px 64px; gap: 12px; align-items: center; padding: 14px 12px; border-top: 1px solid var(--hair); }
+.row:first-child { border-top: 0; }
+.row.lead { background: var(--surface-2); border-radius: 10px; border-top-color: transparent; }
+.row.lead + .row { border-top-color: transparent; }
+.rank { font-family: var(--font-display); font-size: 22px; color: var(--muted); text-align: center; }
+.row.lead .rank { color: var(--ink); }
+.who { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; min-width: 0; }
+.key { width: 14px; height: 14px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--surface); }
+.name { font-weight: 700; font-size: 16px; }
+.blurb { grid-column: 2; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.ret { font-size: 26px; font-weight: 600; line-height: 1.1; white-space: nowrap; }
+.stat { display: grid; gap: 2px; font-size: 14px; white-space: nowrap; }
+.stat .k { color: var(--muted); font-size: 12px; }
+.delta.up { color: var(--up); }
+.delta.down { color: var(--down); }
+.delta.flat { color: var(--muted); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 16px; height: 2px; border-radius: 1px; background: var(--c); }
+.chart { position: relative; min-height: 120px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg:focus-visible { outline-offset: 4px; }
+.tick { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.endlabel { font-size: 12px; fill: var(--ink-2); }
+.endlabel .v { fill: var(--ink); font-weight: 600; }
+.empty { display: grid; gap: 4px; place-content: center; text-align: center; min-height: 180px; padding: 16px; border: 1px dashed var(--axis); border-radius: 10px; color: var(--ink-2); }
+.empty strong { color: var(--ink); }
+
+details > summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; font-weight: 600; width: fit-content; }
+details > summary:hover { color: var(--ink); }
+.scroll { overflow-x: auto; margin-top: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.side.buy { color: var(--up); font-weight: 600; }
+.side.sell { color: var(--down); font-weight: 600; }
+
+.view { border-left: 3px solid var(--p-ai); padding: 2px 0 2px 14px; color: var(--ink); font-size: 15.5px; max-width: 70ch; }
+.picks { list-style: none; margin: 0; padding: 0; display: grid; }
+.pick { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 4px 20px; padding: 14px 0; border-top: 1px solid var(--hair); }
+.pick:first-child { border-top: 0; padding-top: 4px; }
+.pick-name { font-weight: 700; }
+.pick-name .code { color: var(--muted); font-weight: 400; font-size: 12.5px; margin-left: 6px; }
+.pick-why { grid-column: 1 / -1; color: var(--ink-2); font-size: 14px; max-width: 75ch; }
+.wbar { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 10px; align-items: center; }
+.track { height: 8px; background: var(--surface-2); border-radius: 0 4px 4px 0; }
+.fill { display: block; height: 100%; background: var(--p-ai); border-radius: 0 4px 4px 0; }
+.wbar .pctv { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.pick.cash .pick-name { color: var(--ink-2); }
+.pick.cash .fill { background: var(--axis); }
+.meta { color: var(--muted); font-size: 12.5px; }
+.shortlist { display: grid; gap: 6px; margin: 10px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
+.shortlist b { color: var(--ink); font-weight: 600; }
+.error { color: var(--up); }
+
+.holdings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.hcol { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.hhead { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.hhead .eqv { margin-left: auto; font-weight: 500; color: var(--ink-2); font-size: 13.5px; }
+.hlist { list-style: none; margin: 0; padding: 0; display: grid; }
+.hitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; padding: 8px 0; border-top: 1px solid var(--hair); font-size: 14px; }
+.hitem .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hitem .w { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
+.hitem .d { grid-column: 1 / -1; display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.hnote { color: var(--muted); font-size: 13px; }
+
+.entries { display: grid; gap: 8px; }
+.entry { border-top: 1px solid var(--hair); padding-top: 10px; }
+.entry > div { display: grid; gap: 10px; margin-top: 10px; }
+
+.foot { display: grid; gap: 10px; color: var(--ink-2); font-size: 13.5px; }
+.foot h2 { font-size: 15px; color: var(--ink); }
+.foot ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 80ch; }
+.foot .disclaimer { color: var(--muted); }
+
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); border: 1px solid var(--hair); border-radius: 8px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 13px; min-width: 190px; display: grid; gap: 6px; }
+.tip .t-date { color: var(--muted); font-size: 12px; }
+.tip .t-row { display: grid; grid-template-columns: 14px auto 1fr; gap: 8px; align-items: center; }
+.tip .t-row i { width: 14px; height: 2px; border-radius: 1px; background: var(--c); }
+.tip .t-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tip .t-row span { color: var(--ink-2); text-align: right; }
+
+@media (max-width: 860px) {
+  .row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "rank who ret" ". eq today" ". trades trades"; row-gap: 8px; }
+  .rank { grid-area: rank; }
+  .who { grid-area: who; }
+  .ret { grid-area: ret; text-align: right; font-size: 22px; }
+  .row .stat.eq { grid-area: eq; }
+  .row .stat.today { grid-area: today; text-align: right; }
+  .row .stat.trades { grid-area: trades; display: none; }
+  .holdings { grid-template-columns: minmax(0, 1fr); }
+  .pick { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1 class="wordmark"><span class="team" style="text-decoration-color: var(--p-ai)">AI</span><span class="vs">vs</span><span class="team" style="text-decoration-color: var(--p-monkey)">원숭이</span><span class="vs">vs</span><span class="team" style="text-decoration-color: var(--p-hodl)">존버</span></h1>
+      <p class="tagline">DeepSeek이 직접 고른 종목으로 가짜 돈을 굴려요. 랜덤으로 찍는 원숭이, 지수만 사서 들고 있는 존버를 이길 수 있을까요?</p>
+    </div>
+    <p class="stamp" id="stamp"></p>
+  </header>
+  <nav class="tabs" role="tablist" id="tabs" aria-label="시장"></nav>
+  <main id="panels"></main>
+  <footer class="foot card" id="rules"></footer>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DATA = {"generated_at": "2026-09-30T00:54:19.791034+00:00", "markets": [{"key": "kr", "name": "한국", "currency": "KRW", "capital": 100000000.0, "benchmark": "KODEX 200", "fee": 0.00015, "sell_tax": 0.002, "universe": 110, "started": "2026-09-29", "last_decided": "2026-09-29", "updated_at": "2026-09-30T00:41:46.617941+00:00", "sessions": 0, "live": {"date": "2026-09-30", "provisional": true}, "pending": null, "players": [{"key": "ai", "label": "AI (DeepSeek)", "equity": 100091291.55, "ret": 0.0009129155000000555, "today": 0.0009129155000000555, "cash": 21265191.55, "history": [{"date": "2026-09-29", "equity": 100000000.0, "ret": 0.0}], "positions": [{"code": "042700", "name": "한미반도체", "shares": 48, "avg": 250037.5, "price": 254500.0, "value": 12216000.0, "weight": 0.12204857995960189, "pnl": 0.017847322901564766}, {"code": "039030", "name": "이오테크닉스", "shares": 23, "avg": 505075.75, "price": 518000.0, "value": 11914000.0, "weight": 0.1190313344497951, "pnl": 0.025588735947033703}, {"code": "095340", "name": "ISC", "shares": 56, "avg": 211531.725, "price": 211000.0, "value": 11816000.0, "weight": 0.11805222829098362, "pnl": -0.0025136891404823336}, {"code": "240810", "name": "원익IPS", "shares": 61, "avg": 130519.575, "price": 134700.0, "value": 8216700.0, "weight": 0.0820920568888393, "pnl": 0.032029103680425}, {"code": "319660", "name": "피에스케이", "shares": 52, "avg": 153122.965, "price": 148900.0, "value": 7742800.0, "weight": 0.0773573792494438, "pnl": -0.027578913456906995}, {"code": "009150", "name": "삼성전기", "shares": 5, "avg": 1560234.0, "price": 1536000.0, "value": 7680000.0, "weight": 0.07672995203747074, "pnl": -0.015532285541784097}, {"code": "131290", "name": "티에스이", "shares": 26, "avg": 301545.225, "price": 289500.0, "value": 7527000.0, "weight": 0.07520134752422425, "pnl": -0.03994500327438444}, {"code": "403870", "name": "HPSP", "shares": 65, "avg": 61109.165, "price": 62800.0, "value": 4082000.0, "weight": 0.04078276877824942, "pnl": 0.027669090225664217}, {"code": "096770", "name": "SK이노베이션", "shares": 26, "avg": 148322.245, "price": 148600.0, "value": 3863600.0, "weight": 0.03860076076718385, "pnl": 0.0018726456034967587}, {"code": "000500", "name": "가온전선", "shares": 12, "avg": 323048.45, "price": 314000.0, "value": 3768000.0, "weight": 0.03764563271838408, "pnl": -0.028009575653435315}], "trades": [{"date": "2026-09-30", "side": "buy", "code": "096770", "name": "SK이노베이션", "shares": 26, "price": 148300.0, "cost": 578.37}, {"date": "2026-09-30", "side": "buy", "code": "000500", "name": "가온전선", "shares": 12, "price": 323000.0, "cost": 581.4}, {"date": "2026-09-30", "side": "buy", "code": "403870", "name": "HPSP", "shares": 65, "price": 61100.0, "cost": 595.725}, {"date": "2026-09-30", "side": "buy", "code": "009150", "name": "삼성전기", "shares": 5, "price": 1560000.0, "cost": 1170.0}, {"date": "2026-09-30", "side": "buy", "code": "131290", "name": "티에스이", "shares": 26, "price": 301500.0, "cost": 1175.85}, {"date": "2026-09-30", "side": "buy", "code": "240810", "name": "원익IPS", "shares": 61, "price": 130500.0, "cost": 1194.075}, {"date": "2026-09-30", "side": "buy", "code": "319660", "name": "피에스케이", "shares": 52, "price": 153100.0, "cost": 1194.18}, {"date": "2026-09-30", "side": "buy", "code": "039030", "name": "이오테크닉스", "shares": 23, "price": 505000.0, "cost": 1742.25}, {"date": "2026-09-30", "side": "buy", "code": "095340", "name": "ISC", "shares": 56, "price": 211500.0, "cost": 1776.6}, {"date": "2026-09-30", "side": "buy", "code": "042700", "name": "한미반도체", "shares": 48, "price": 250000.0, "cost": 1800.0}], "n_trades": 10, "fees": 11808.45, "price_dates": {"042700": "2026-09-30", "095340": "2026-09-30", "039030": "2026-09-30", "319660": "2026-09-30", "240810": "2026-09-30", "131290": "2026-09-30", "009150": "2026-09-30", "403870": "2026-09-30", "000500": "2026-09-30", "096770": "2026-09-30"}}, {"key": "monkey", "label": "원숭이", "equity": 99060421.38, "ret": -0.009395786200000034, "today": -0.009395786200000034, "cash": 794321.3800000101, "history": [{"date": "2026-09-29", "equity": 100000000.0, "ret": 0.0}], "positions": [{"code": "095340", "name": "ISC", "shares": 94, "avg": 211531.72499999998, "price": 211000.0, "value": 19834000.0, "weight": 0.20022123592545535, "pnl": -0.0025136891404822226}, {"code": "105560", "name": "KB금융", "shares": 115, "avg": 173626.04, "price": 171700.0, "value": 19745500.0, "weight": 0.19932784178512042, "pnl": -0.01109303650535376}, {"code": "222800", "name": "심텍", "shares": 131, "avg": 151822.77000000002, "price": 150600.0, "value": 19728600.0, "weight": 0.1991572388362881, "pnl": -0.008053930250383479}, {"code": "032830", "name": "삼성생명", "shares": 68, "avg": 293043.95, "price": 287500.0, "value": 19550000.0, "weight": 0.19735429879714894, "pnl": -0.01891849328402795}, {"code": "003230", "name": "삼양식품", "shares": 16, "avg": 1221183.15, "price": 1213000.0, "value": 19408000.0, "weight": 0.19592083023299572, "pnl": -0.006701001401796192}], "trades": [{"date": "2026-09-30", "side": "buy", "code": "003230", "name": "삼양식품", "shares": 16, "price": 1221000.0, "cost": 2930.4}, {"date": "2026-09-30", "side": "buy", "code": "095340", "name": "ISC", "shares": 94, "price": 211500.0, "cost": 2982.15}, {"date": "2026-09-30", "side": "buy", "code": "222800", "name": "심텍", "shares": 131, "price": 151800.0, "cost": 2982.87}, {"date": "2026-09-30", "side": "buy", "code": "032830", "name": "삼성생명", "shares": 68, "price": 293000.0, "cost": 2988.6}, {"date": "2026-09-30", "side": "buy", "code": "105560", "name": "KB금융", "shares": 115, "price": 173600.0, "cost": 2994.6}], "n_trades": 5, "fees": 14878.619999999999, "price_dates": {"105560": "2026-09-30", "032830": "2026-09-30", "222800": "2026-09-30", "095340": "2026-09-30", "003230": "2026-09-30"}}, {"key": "hodl", "label": "존버", "equity": 100106646.865, "ret": 0.0010664686499999299, "today": 0.0010664686499999299, "cash": 64111.864999994636, "history": [{"date": "2026-09-29", "equity": 100000000.0, "ret": 0.0}], "positions": [{"code": "069500", "name": "KODEX 200", "shares": 901, "avg": 110916.63500000001, "price": 111035.0, "value": 100042535.0, "weight": 0.9993595643545383, "pnl": 0.0010671528215762116}], "trades": [{"date": "2026-09-30", "side": "buy", "code": "069500", "name": "KODEX 200", "shares": 901, "price": 110900.0, "cost": 14988.135}], "n_trades": 1, "fees": 14988.135, "price_dates": {"069500": "2026-09-30"}}], "journal": [{"date": "2026-09-29", "decided_at": "2026-09-30T00:41:46.617941+00:00", "scout_view": "코스피 대형주가 반등하는 가운데 반도체·장비·소재 업종이 뚜렷한 상대 강세를 보이고 있으며, 일부 전력인프라 종목도 모멘텀이 유지되고 있다. 단기 과열 부담이 있는 종목도 있어 뉴스와 지표를 통한 옥석 가리기가 필요하다.", "shortlist": [{"code": "005930", "why": "대장주로 수급과 지수 상승을 이끌며 5일·20일 수익률 양호, 거래량비 1.16으로 개선", "name": "삼성전자"}, {"code": "000660", "why": "HBM 중심 반도체 대장주, 20일 +8.3%로 회복 흐름", "name": "SK하이닉스"}, {"code": "009150", "why": "MLCC·반도체 패키지 수혜 기대, 5일 +11.7%로 단기 모멘텀 강함", "name": "삼성전기"}, {"code": "042700", "why": "HBM 장비 대표주, 20일 +14.8% 상승 추세", "name": "한미반도체"}, {"code": "036930", "why": "반도체 장비 업종 내 20일 +26.4%로 가파른 상승, RSI 68로 과열 직전", "name": "주성엔지니어링"}, {"code": "240810", "why": "반도체 장비주, 20일 +18.0%, 거래량비 1.52로 수급 집중", "name": "원익IPS"}, {"code": "039030", "why": "레이저 장비 종목, 20일 +26.0%, RSI 60으로 추가 여력", "name": "이오테크닉스"}, {"code": "403870", "why": "반도체 장비·소재, 20일 +20.7%로 상승 추세", "name": "HPSP"}, {"code": "095340", "why": "반도체 테스트 소켓, 20일 +21.4%, RSI 65", "name": "ISC"}, {"code": "319660", "why": "반도체 장비, 20일 +15.7%로 꾸준한 상승", "name": "피에스케이"}, {"code": "222800", "why": "반도체 기판, 20일 +24.3%, RSI 73으로 단기 과열이나 강한 모멘텀", "name": "심텍"}, {"code": "067310", "why": "반도체 후공정, 20일 +33.2%로 최상위권, 거래량비 1.69", "name": "하나마이크론"}, {"code": "131290", "why": "반도체 테스트 장비, 20일 +26.4%, 고점대비 -1.6%로 신고가 임박", "name": "티에스이"}, {"code": "000500", "why": "전력인프라·전선 테마, 20일 +54.4%로 급등, 거래량비 0.72로 조정 여부 확인 필요", "name": "가온전선"}, {"code": "096770", "why": "정유·배터리, 20일 +25.9%, 60일 +50.2%이나 당일 -7.4% 급락 원인 확인 필요", "name": "SK이노베이션"}], "market_view": "코스피가 외국인 매도와 금리 악재로 조정을 받고 있으나, 반도체 장비·소재 업종은 수주와 투자 소식에 힘입어 강세를 보이고 있습니다. AI 인프라 수혜가 지속될 것으로 판단되어 관련 종목 중심으로 포트폴리오를 구성합니다.", "targets": [{"code": "042700", "name": "한미반도체", "weight": 0.12, "reason": "HBM 장비 대표주로 최근 수주 소식에 상승 중이며 20일 수익률 +14.8%로 추세 양호"}, {"code": "039030", "name": "이오테크닉스", "weight": 0.12, "reason": "레이저 장비 종목으로 20일 +26.0%의 강한 모멘텀, RSI 60으로 아직 과열 아님"}, {"code": "095340", "name": "ISC", "weight": 0.12, "reason": "반도체 테스트 소켓 기업으로 1000억 규모 투자 발표, 20일 +21.4% 상승"}, {"code": "319660", "name": "피에스케이", "weight": 0.08, "reason": "반도체 장비주로 목표가 상향 뉴스, 20일 +15.7%로 꾸준한 상승세"}, {"code": "131290", "name": "티에스이", "weight": 0.08, "reason": "반도체 테스트 장비 업체로 신고가 임박, 20일 +26.4% 고성장"}, {"code": "009150", "name": "삼성전기", "weight": 0.08, "reason": "MLCC·반도체 패키지 수혜, 2900억 규모 공급 계약 체결로 실적 기대"}, {"code": "240810", "name": "원익IPS", "weight": 0.08, "reason": "반도체 장비주로 거래량비 1.52로 수급 집중, 20일 +18.0% 상승"}, {"code": "403870", "name": "HPSP", "weight": 0.04, "reason": "반도체 장비·소재, 20일 +20.7% 상승, 다만 RSI 69로 소폭 과열"}, {"code": "000500", "name": "가온전선", "weight": 0.04, "reason": "전력 인프라 테마, 미국 송전망 투자 확대 수혜, 다만 변동성 큼"}, {"code": "096770", "name": "SK이노베이션", "weight": 0.04, "reason": "정유·배터리, 사상 최대 실적 전망과 저평가(추정PER 7.88) 매력이나 당일 급락으로 보수적 접근"}], "cash_reason": "시장이 조정 국면에 있어 현금 비중 20%를 유지하여 변동성에 대비하고, 추가 하락 시 매수 기회로 활용합니다.", "model": "deepseek-v4-pro", "usage": {"scout": {"prompt_tokens": 8503, "completion_tokens": 3339, "total_tokens": 11842, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 2606}, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 8503}, "decide": {"prompt_tokens": 6247, "completion_tokens": 3720, "total_tokens": 9967, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 3038}, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 6247}}, "monkey": ["삼성생명", "KB금융", "삼양식품", "심텍", "ISC"]}]}, {"key": "us", "name": "미국", "currency": "USD", "capital": 100000.0, "benchmark": "SPY (S&P 500)", "fee": 0.0007, "sell_tax": 0.0, "universe": 120, "started": "2026-09-29", "last_decided": "2026-09-29", "updated_at": "2026-09-30T00:43:43.029077+00:00", "sessions": 0, "live": {"date": null, "provisional": false}, "pending": {"decided_on": "2026-09-29", "who": ["AI (DeepSeek)", "원숭이", "존버"]}, "players": [{"key": "ai", "label": "AI (DeepSeek)", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}, {"key": "monkey", "label": "원숭이", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}, {"key": "hodl", "label": "존버", "equity": 100000.0, "ret": 0.0, "today": 0.0, "cash": 100000.0, "history": [{"date": "2026-09-29", "equity": 100000.0, "ret": 0.0}], "positions": [], "trades": [], "n_trades": 0, "fees": 0, "price_dates": {}}], "journal": [{"date": "2026-09-29", "decided_at": "2026-09-30T00:43:43.029077+00:00", "scout_view": "최근 60일간 반도체·대형 기술주와 에너지가 강세를 보였으나, 최근 5일은 차익 실현과 업종 순환으로 혼조세다. 전액 현금 상태에서 상승 추세 확인 종목과 과매도 우량주를 중심으로 후보를 추렸다.", "shortlist": [{"code": "NVDA.O", "why": "AI 반도체 대장주, 60일 +16.2%, RSI 54로 과열 없이 안정적 상승", "name": "엔비디아"}, {"code": "AMD.O", "why": "20일 +29.1% 급등, 반도체 모멘텀 강함, 조정 여부 확인 필요", "name": "AMD(어드밴스드 마이크로 디바이시스)"}, {"code": "AVGO.O", "why": "반도체 대형주, 최근 조정 후 반등 시도, 20일 -4.1%로 추가 상승 여지", "name": "브로드컴"}, {"code": "TSM", "why": "파운드리 선두, 20일 +10.0%, RSI 62로 견조한 상승", "name": "TSMC ADR"}, {"code": "META.O", "why": "20일 +29.1%, 60일 +23.1%로 강한 모멘텀, AI/광고 수혜", "name": "메타"}, {"code": "MRVL.O", "why": "20일 +24.4%, RSI 63, 데이터센터/네트워킹 수요", "name": "마벨 테크놀로지 그룹"}, {"code": "INTC.O", "why": "20일 +29.5% 급등, 파운드리 전략 기대, 변동성 크지만 추세 확인", "name": "인텔"}, {"code": "AMAT.O", "why": "반도체 장비, 20일 +11.7%, 60일 -13.6%에서 회복, RSI 64", "name": "어플라이드 머티어리얼즈"}, {"code": "ASML.O", "why": "EUV 독점, 20일 +8.2%, RSI 61, 안정적 상승", "name": "ASML 홀딩 ADR"}, {"code": "LLY", "why": "대형 제약, RSI 75, 20일 +2.4%, 방어적 성장", "name": "일라이 릴리"}, {"code": "XOM", "why": "에너지 대표, 60일 +18.3%, 20일 +0.2%로 조정 후 재상승 가능", "name": "엑슨모빌 홀딩스"}, {"code": "PFE", "why": "제약, 60일 +21.1%, RSI 77, 배당주로 방어적", "name": "화이자"}, {"code": "TSLA.O", "why": "과매도, 20일 -4.1%, 60일 -15.9%, RSI 39, 저가 반등 검토", "name": "테슬라"}, {"code": "NFLX.O", "why": "과매도, 20일 -13.3%, RSI 36, 급락 후 반등 여부", "name": "넷플릭스"}, {"code": "MCD", "why": "경기 방어적 우량주, 20일 -11.2%, RSI 22 과매도", "name": "맥도날드"}], "market_view": "채권 금리 상승 부담이 있지만 AI 반도체 수요와 기술주 낙관론이 지지하며 시장은 보합~상승 흐름. 종목별 차별화 장세 예상.", "targets": [{"code": "NVDA.O", "name": "엔비디아", "weight": 0.22, "reason": "AI 반도체 대장주, RSI 54로 과열 없이 안정적 상승 지속. 60일 +16.2%로 견조."}, {"code": "TSM", "name": "TSMC ADR", "weight": 0.18, "reason": "파운드리 선두, RSI 62로 견조한 상승. AI 수요 직접 수혜 종목."}, {"code": "AVGO.O", "name": "브로드컴", "weight": 0.13, "reason": "최근 조정 후 반등 시도, RSI 44로 저평가. 고점 대비 하락 폭 커 상승 여지."}, {"code": "ASML.O", "name": "ASML 홀딩 ADR", "weight": 0.1, "reason": "EUV 독점, RSI 61 안정적. 반도체 장비 필수 기업."}, {"code": "MRVL.O", "name": "마벨 테크놀로지 그룹", "weight": 0.1, "reason": "데이터센터/네트워킹 수요, 20일 +24.4% 모멘텀. RSI 63으로 아직 여유."}, {"code": "META.O", "name": "메타", "weight": 0.08, "reason": "AI/광고 강한 모멘텀, RSI 66. 단기 급등에도 아직 상승 여지."}, {"code": "AMD.O", "name": "AMD(어드밴스드 마이크로 디바이시스)", "weight": 0.05, "reason": "20일 +29.1% 모멘텀 강하지만 RSI 69 과열, 소량만 편입."}, {"code": "AMAT.O", "name": "어플라이드 머티어리얼즈", "weight": 0.04, "reason": "반도체 장비, 1일 +5.2% 급등, RSI 64. 60일 하락에서 회복 중."}], "cash_reason": "금리 상승 변동성 대비 및 추가 매수 기회 확보를 위해 현금 10% 유지.", "model": "deepseek-v4-pro", "usage": {"scout": {"prompt_tokens": 9942, "completion_tokens": 4732, "total_tokens": 14674, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 4025}, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 9942}, "decide": {"prompt_tokens": 6667, "completion_tokens": 4195, "total_tokens": 10862, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 3667}, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 6667}}, "monkey": ["버라이존", "코스트코 홀세일", "웰타워", "어플라이드 머티어리얼즈", "린드"]}]}], "rules": {"model": "deepseek-v4-pro", "max_positions": 10, "min_weight": 0.03, "max_weight": 0.3, "monkey_picks": 5, "monkey_every": 5}};
+const COLOR = { ai: "--p-ai", monkey: "--p-monkey", hodl: "--p-hodl" };
+const SHORT = { ai: "AI", monkey: "원숭이", hodl: "존버" };
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+function sv(tag, attrs, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid != null) el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function krwShort(x) {
+  const sign = x < 0 ? "-" : "";
+  x = Math.abs(Math.round(x));
+  const eok = Math.floor(x / 1e8), man = Math.floor((x % 1e8) / 1e4);
+  if (eok && man) return `${sign}${eok}억 ${man.toLocaleString("ko-KR")}만원`;
+  if (eok) return `${sign}${eok}억원`;
+  if (man) return `${sign}${man.toLocaleString("ko-KR")}만원`;
+  return `${sign}${x.toLocaleString("ko-KR")}원`;
+}
+function money(x, cur, full) {
+  if (cur === "KRW") return full ? `${Math.round(x).toLocaleString("ko-KR")}원` : krwShort(x);
+  const d = full ? 2 : 0;
+  return (x < 0 ? "-$" : "$") + Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function price(x, cur) {
+  return cur === "KRW"
+    ? Math.round(x).toLocaleString("ko-KR")
+    : x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pct(r, d = 2) {
+  const v = r * 100;
+  if (Math.abs(v) < 0.5 * 10 ** -d) return (0).toFixed(d) + "%";
+  return (v > 0 ? "+" : "") + v.toFixed(d) + "%";
+}
+function dir(r) { return Math.abs(r) < 5e-5 ? "flat" : r > 0 ? "up" : "down"; }
+function delta(r, d = 2) {
+  const k = dir(r);
+  return h("span", { class: `delta ${k}` }, k === "up" ? "▲ " : k === "down" ? "▼ " : "", pct(r, d));
+}
+function day(d) { if (!d) return "-"; const [, m, dd] = d.split("-"); return `${+m}월 ${+dd}일`; }
+function shortDay(d) { const [, m, dd] = d.split("-"); return `${+m}/${+dd}`; }
+function stampText(iso) {
+  return new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+function blurb(p, m) {
+  if (p.key === "ai") return `시총 상위 ${m.universe}개 후보에서 직접 골라 비중을 정해요`;
+  if (p.key === "monkey") return `${DATA.rules.monkey_picks}종목을 무작위로 찍고 결정 ${DATA.rules.monkey_every}번마다 갈아엎어요`;
+  return `${m.benchmark}를 사서 끝까지 들고 가요`;
+}
+
+/* ---------- 순위표 ---------- */
+function headline(m) {
+  const ranked = [...m.players].sort((a, b) => b.ret - a.ret);
+  const ai = m.players.find(p => p.key === "ai");
+  const hodl = m.players.find(p => p.key === "hodl");
+  if (m.players.every(p => dir(p.ret) === "flat" && p.n_trades === 0)) {
+    return h("p", { class: "headline" }, "아직 아무도 안 움직였어요. ",
+      h("span", { class: "soft" }, m.pending ? `${day(m.pending.decided_on)} 종가 보고 정한 첫 주문이 다음 장 시가에 체결돼요.` : "첫 결정을 기다리는 중이에요."));
+  }
+  const lead = ranked[0];
+  const gap = ai.ret - hodl.ret;
+  const gapText = Math.abs(gap) < 5e-5 ? "AI랑 존버는 동점이에요." : `AI는 존버보다 ${Math.abs(gap * 100).toFixed(2)}%p ${gap > 0 ? "앞서 있어요." : "뒤처져 있어요."}`;
+  return h("p", { class: "headline" }, `지금 1등은 ${lead.label} (${pct(lead.ret)}). `, h("span", { class: "soft" }, gapText));
+}
+
+function standings(m) {
+  const ranked = [...m.players].sort((a, b) => b.ret - a.ret);
+  const tie = ranked.every(p => Math.abs(p.ret - ranked[0].ret) < 5e-5);
+  const todayKey = m.live.provisional ? "오늘 (장중)" : "직전 거래일 대비";
+  return h("ol", { class: "standings", "aria-label": "리그 순위" }, ranked.map((p, i) =>
+    h("li", { class: `row${i === 0 && !tie ? " lead" : ""}` },
+      h("span", { class: "rank", "aria-label": tie ? "공동" : `${i + 1}위` }, tie ? "–" : String(i + 1)),
+      h("span", { class: "who" },
+        h("i", { class: "key", style: `--c: var(${COLOR[p.key]})` }),
+        h("span", { class: "name" }, p.label),
+        h("span", { class: "blurb" }, blurb(p, m))),
+      h("span", { class: "ret" }, delta(p.ret)),
+      h("span", { class: "stat eq" }, h("span", { class: "k" }, "평가금액"), money(p.equity, m.currency)),
+      h("span", { class: "stat today" }, h("span", { class: "k" }, todayKey), delta(p.today)),
+      h("span", { class: "stat trades" }, h("span", { class: "k" }, "매매"), `${p.n_trades}건`))));
+}
+
+/* ---------- 수익률 레이스 ---------- */
+function seriesOf(m) {
+  return m.players.map(p => {
+    const pts = p.history.map(x => ({ date: x.date, ret: x.ret, eq: x.equity, live: false }));
+    if (m.live.provisional) pts.push({ date: m.live.date, ret: p.ret, eq: p.equity, live: true });
+    return { key: p.key, label: p.label, pts };
+  });
+}
+function niceTicks(lo, hi, count) {
+  const span = hi - lo;
+  const raw = span / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(st => span / st <= count) || 10 * mag;
+  const out = [];
+  for (let v = Math.floor(lo / step) * step; v <= Math.ceil(hi / step) * step + step / 2; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function tickText(v) {
+  const t = (v * 100).toFixed(2).replace(/\.?0+$/, "");
+  return (v > 0 ? "+" : "") + (t === "-0" ? "0" : t) + "%";
+}
+
+function drawChart(host, m) {
+  host.textContent = "";
+  const ser = seriesOf(m);
+  const n = Math.max(...ser.map(s => s.pts.length));
+  if (n < 2) {
+    host.append(h("div", { class: "empty" },
+      h("strong", {}, "아직 그릴 선이 없어요"),
+      h("span", {}, "첫 거래일이 끝나면 여기서 셋의 수익률이 경주를 시작해요.")));
+    return;
+  }
+  const W = Math.max(host.clientWidth, 280);
+  const dates = ser[0].pts.map(p => p.date);
+  const vals = ser.flatMap(s => s.pts.map(p => p.ret)).concat(0);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 0.004) { const mid = (hi + lo) / 2; lo = mid - 0.002; hi = mid + 0.002; }
+  const ticks = niceTicks(lo, hi, 5);
+  lo = ticks[0]; hi = ticks[ticks.length - 1];
+
+  const PH = W < 520 ? 200 : 250, padT = 12, padB = 30, padL = 54;
+  const ends = ser.map(s => ({ key: s.key, v: s.pts[s.pts.length - 1].ret }));
+  const yOf = v => padT + PH * (hi - v) / (hi - lo);
+  const sortedY = ends.map(e => yOf(e.v)).sort((a, b) => a - b);
+  const labelsFit = W >= 420 && sortedY.every((y, i) => i === 0 || y - sortedY[i - 1] >= 16);
+  const padR = labelsFit ? 104 : 14;
+  const plotW = W - padL - padR;
+  const xOf = i => padL + plotW * (i / (n - 1));
+  const H = padT + PH + padB;
+
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", tabindex: "0",
+    "aria-label": "수익률 레이스. " + ser.map(s => `${SHORT[s.key]} ${pct(s.pts[s.pts.length - 1].ret)}`).join(", ") });
+
+  for (const t of ticks) {
+    const y = yOf(t);
+    svg.append(sv("line", { x1: padL, x2: padL + plotW, y1: y, y2: y, stroke: t === 0 ? cssVar("--axis") : cssVar("--grid"), "stroke-width": 1, "shape-rendering": "crispEdges" }));
+    svg.append(sv("text", { x: padL - 8, y: y + 4, "text-anchor": "end", class: "tick" }, tickText(t)));
+  }
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(plotW / 70))));
+  dates.forEach((d, i) => {
+    if (i % every !== 0 && i !== n - 1) return;
+    if (i !== n - 1 && n - 1 - i < every) return;
+    const live = ser[0].pts[i].live;
+    svg.append(sv("text", { x: xOf(i), y: padT + PH + 20, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle", class: "tick" }, live ? "지금" : shortDay(d)));
+  });
+
+  const surface = cssVar("--surface");
+  for (const s of ser) {
+    const color = cssVar(COLOR[s.key]);
+    const solid = s.pts.filter(p => !p.live);
+    const dSolid = solid.map((p, i) => `${i ? "L" : "M"}${xOf(i).toFixed(1)},${yOf(p.ret).toFixed(1)}`).join("");
+    if (solid.length > 1) svg.append(sv("path", { d: dSolid, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const last = s.pts[s.pts.length - 1];
+    if (last.live && solid.length) {
+      const a = solid.length - 1;
+      svg.append(sv("path", { d: `M${xOf(a)},${yOf(solid[a].ret)}L${xOf(n - 1)},${yOf(last.ret)}`, fill: "none", stroke: color, "stroke-width": 2, "stroke-dasharray": "4 4", "stroke-linecap": "round" }));
+    }
+    svg.append(sv("circle", { cx: xOf(n - 1), cy: yOf(last.ret), r: 4, fill: last.live ? surface : color, stroke: last.live ? color : surface, "stroke-width": 2 }));
+    if (labelsFit) {
+      svg.append(sv("text", { x: xOf(n - 1) + 10, y: yOf(last.ret) + 4, class: "endlabel" },
+        SHORT[s.key] + " ", sv("tspan", { class: "v" }, pct(last.ret))));
+    }
+  }
+
+  const cross = sv("line", { y1: padT, y2: padT + PH, stroke: cssVar("--axis"), "stroke-width": 1, visibility: "hidden" });
+  const dots = ser.map(s => sv("circle", { r: 4, fill: cssVar(COLOR[s.key]), stroke: surface, "stroke-width": 2, visibility: "hidden" }));
+  svg.append(cross, ...dots);
+  host.append(svg);
+
+  const tip = document.getElementById("tip");
+  let cur = n - 1;
+  function show(i, cx, cy) {
+    cur = i;
+    const x = xOf(i);
+    cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+    ser.forEach((s, k) => {
+      const p = s.pts[i];
+      dots[k].setAttribute("cx", x); dots[k].setAttribute("cy", yOf(p.ret)); dots[k].setAttribute("visibility", "visible");
+    });
+    tip.textContent = "";
+    const live = ser[0].pts[i].live;
+    tip.append(h("div", { class: "t-date" }, day(dates[i]) + (live ? " · 장중" : " 종가")));
+    [...ser].sort((a, b) => b.pts[i].ret - a.pts[i].ret).forEach(s => {
+      const p = s.pts[i];
+      tip.append(h("div", { class: "t-row" }, h("i", { style: `--c: var(${COLOR[s.key]})` }), h("b", {}, pct(p.ret)), h("span", {}, `${SHORT[s.key]} · ${money(p.eq, m.currency)}`)));
+    });
+    tip.hidden = false;
+    const r = tip.getBoundingClientRect();
+    let left = cx + 16, top = cy + 16;
+    if (left + r.width > window.innerWidth - 8) left = cx - r.width - 16;
+    if (top + r.height > window.innerHeight - 8) top = cy - r.height - 16;
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, top) + "px";
+  }
+  function hide() {
+    cross.setAttribute("visibility", "hidden");
+    dots.forEach(d => d.setAttribute("visibility", "hidden"));
+    tip.hidden = true;
+  }
+  svg.addEventListener("pointermove", e => {
+    const box = svg.getBoundingClientRect();
+    const px = (e.clientX - box.left) * (W / box.width);
+    const i = Math.min(n - 1, Math.max(0, Math.round((px - padL) / plotW * (n - 1))));
+    show(i, e.clientX, e.clientY);
+  });
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("blur", hide);
+  const showAtCursor = () => {
+    const box = svg.getBoundingClientRect();
+    show(cur, box.left + xOf(cur) * (box.width / W), box.top + yOf(ser[0].pts[cur].ret) * (box.height / H));
+  };
+  svg.addEventListener("focus", showAtCursor);
+  svg.addEventListener("keydown", e => {
+    if (e.key === "ArrowLeft") cur = Math.max(0, cur - 1);
+    else if (e.key === "ArrowRight") cur = Math.min(n - 1, cur + 1);
+    else if (e.key === "Escape") return hide();
+    else return;
+    e.preventDefault();
+    showAtCursor();
+  });
+}
+
+function raceCard(m) {
+  const host = h("div", { class: "chart" });
+  const ser = seriesOf(m);
+  const rows = ser[0].pts.map((p, i) => h("tr", {},
+    h("td", {}, day(p.date) + (p.live ? " (장중)" : "")),
+    ser.map(s => h("td", { class: "num" }, pct(s.pts[i].ret), " · ", money(s.pts[i].eq, m.currency)))));
+  const card = h("section", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "수익률 레이스"),
+      h("p", { class: "sub" }, "시작일을 0%로 놓고 거래일마다 종가 기준으로 그려요." + (m.live.provisional ? " 점선 끝은 아직 장이 안 끝난 지금 가격이에요." : ""))),
+    h("div", { class: "legend" }, m.players.map(p => h("span", {}, h("i", { style: `--c: var(${COLOR[p.key]})` }), p.label))),
+    host,
+    h("details", {},
+      h("summary", {}, "표로 보기"),
+      h("div", { class: "scroll" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "날짜"), ser.map(s => h("th", { class: "num" }, s.label)))),
+        h("tbody", {}, rows.reverse())))));
+  card._draw = () => drawChart(host, m);
+  return card;
+}
+
+/* ---------- AI의 한 수 ---------- */
+function decisionBody(j, m, compact) {
+  const body = [];
+  if (j.error) body.push(h("p", { class: "error" }, `이날은 AI 호출이 실패해서 매매를 쉬었어요: ${j.error}`));
+  if (j.market_view) body.push(h("p", { class: "view" }, j.market_view));
+  if (j.targets) {
+    const total = j.targets.reduce((a, t) => a + t.weight, 0);
+    const scale = DATA.rules.max_weight;
+    const items = j.targets.map(t => h("li", { class: "pick" },
+      h("span", { class: "pick-name" }, t.name, h("span", { class: "code" }, t.code)),
+      h("span", { class: "wbar" }, h("span", { class: "track" }, h("span", { class: "fill", style: `width: ${Math.min(100, t.weight / scale * 100)}%` })), h("span", { class: "pctv" }, `${Math.round(t.weight * 100)}%`)),
+      t.reason && h("p", { class: "pick-why" }, t.reason)));
+    const cash = Math.max(0, 1 - total);
+    items.push(h("li", { class: "pick cash" },
+      h("span", { class: "pick-name" }, "현금"),
+      h("span", { class: "wbar" }, h("span", { class: "track" }, h("span", { class: "fill", style: `width: ${Math.min(100, cash / scale * 100)}%` })), h("span", { class: "pctv" }, `${Math.round(cash * 100)}%`)),
+      j.cash_reason && h("p", { class: "pick-why" }, j.cash_reason)));
+    body.push(h("ul", { class: "picks" }, items));
+  }
+  if (!compact && j.shortlist && j.shortlist.length) {
+    body.push(h("details", {},
+      h("summary", {}, `1단계에서 추린 후보 ${j.shortlist.length}개 보기`),
+      j.scout_view && h("p", { class: "meta", style: "margin-top: 10px" }, j.scout_view),
+      h("ul", { class: "shortlist" }, j.shortlist.map(s => h("li", {}, h("b", {}, s.name), ` ${s.why}`)))));
+  }
+  const tokens = j.usage ? Object.values(j.usage).reduce((a, u) => a + ((u && u.total_tokens) || 0), 0) : 0;
+  const bits = [];
+  if (j.model) bits.push(`모델 ${j.model}`);
+  if (tokens) bits.push(`토큰 ${tokens.toLocaleString("ko-KR")}개`);
+  if (j.monkey) bits.push(`같은 날 원숭이 다트: ${j.monkey.join(", ")}`);
+  if (bits.length) body.push(h("p", { class: "meta" }, bits.join(" · ")));
+  return body;
+}
+
+function decisionCard(m) {
+  const j = m.journal[0];
+  if (!j) return null;
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h2", {}, "AI의 한 수"),
+      h("p", { class: "sub" }, `${day(j.date)} 종가까지 보고 정한 목표 비중이에요. 주문은 다음 거래일 시가에 체결돼요.`)),
+    decisionBody(j, m, false));
+}
+
+function journalCard(m) {
+  const past = m.journal.slice(1);
+  if (!past.length) return null;
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "지난 판단"), h("p", { class: "sub" }, "AI가 날마다 뭘 보고 뭘 샀는지 남겨둔 기록이에요.")),
+    h("div", { class: "entries" }, past.map(j => h("details", { class: "entry" },
+      h("summary", {}, `${day(j.date)} 결정 · ${j.targets ? j.targets.map(t => t.name).slice(0, 4).join(", ") + (j.targets.length > 4 ? ` 외 ${j.targets.length - 4}개` : "") : "매매 없음"}`),
+      h("div", {}, decisionBody(j, m, true))))));
+}
+
+/* ---------- 보유 종목 ---------- */
+function holdingsCard(m) {
+  const cols = m.players.map(p => {
+    const items = p.positions.map(x => h("li", { class: "hitem" },
+      h("span", { class: "n", title: x.name }, x.name),
+      h("span", { class: "w" }, `${(x.weight * 100).toFixed(1)}%`),
+      h("span", { class: "d" }, h("span", {}, `${x.shares.toLocaleString("ko-KR")}주 · 평단 ${price(x.avg, m.currency)}`), delta(x.pnl))));
+    items.push(h("li", { class: "hitem" },
+      h("span", { class: "n" }, "현금"),
+      h("span", { class: "w" }, `${(p.cash / p.equity * 100).toFixed(1)}%`),
+      h("span", { class: "d" }, h("span", {}, money(p.cash, m.currency, true)), h("span", {}))));
+    return h("div", { class: "hcol" },
+      h("div", { class: "hhead" }, h("i", { class: "key", style: `--c: var(${COLOR[p.key]})` }), p.label, h("span", { class: "eqv" }, money(p.equity, m.currency))),
+      p.positions.length ? null : h("p", { class: "hnote" }, m.pending ? "첫 주문이 체결되길 기다리는 중이에요." : "보유 종목이 없어요."),
+      h("ul", { class: "hlist" }, items));
+  });
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "보유 종목"), h("p", { class: "sub" }, "비중과 평단 대비 수익률이에요. 가격은 마지막으로 받아온 시세 기준이에요.")),
+    h("div", { class: "holdings" }, cols));
+}
+
+/* ---------- 매매 기록 ---------- */
+function tradesCard(m) {
+  const all = m.players.flatMap(p => p.trades.map(t => ({ ...t, who: p.key })))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 40);
+  if (!all.length) return null;
+  const fees = m.players.map(p => `${SHORT[p.key]} ${money(p.fees, m.currency, true)}`).join(" · ");
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "매매 기록"), h("p", { class: "sub" }, `최근 ${all.length}건. 지금까지 낸 수수료·세금: ${fees}`)),
+    h("div", { class: "scroll" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}, "체결일"), h("th", {}, "선수"), h("th", {}, "구분"), h("th", {}, "종목"), h("th", { class: "num" }, "수량"), h("th", { class: "num" }, "체결가"), h("th", { class: "num" }, "비용"))),
+      h("tbody", {}, all.map(t => h("tr", {},
+        h("td", {}, day(t.date)),
+        h("td", {}, SHORT[t.who]),
+        h("td", {}, h("span", { class: `side ${t.side}` }, t.side === "buy" ? "매수" : "매도")),
+        h("td", {}, t.name),
+        h("td", { class: "num" }, t.shares.toLocaleString("ko-KR")),
+        h("td", { class: "num" }, price(t.price, m.currency)),
+        h("td", { class: "num" }, money(t.cost, m.currency, true))))))));
+}
+
+/* ---------- 규칙 ---------- */
+function rulesFooter() {
+  const r = DATA.rules;
+  const caps = DATA.markets.map(m => `${m.name} ${money(m.capital, m.currency)}`).join(", ");
+  const costs = DATA.markets.map(m => `${m.name}은 수수료 ${(m.fee * 100).toFixed(3).replace(/0+$/, "")}%` + (m.sell_tax ? `에 매도세 ${(m.sell_tax * 100).toFixed(2)}%` : "")).join(", ");
+  const univ = DATA.markets.map(m => `${m.name} ${m.universe}개`).join(", ");
+  const benches = DATA.markets.map(m => m.benchmark).join(", ");
+  const box = document.getElementById("rules");
+  box.append(
+    h("h2", {}, "규칙"),
+    h("ul", {},
+      h("li", {}, `셋 다 같은 돈으로 시작해요: ${caps}.`),
+      h("li", {}, "결정은 장이 끝나 확정된 종가까지의 데이터로 하고, 주문은 다음 거래일 시가에 체결돼요. 장중에 결정하면 그날 장 시작 전 뉴스까지만 봐요."),
+      h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스와 지표를 읽고 최대 ${r.max_positions}종목을 종목당 ${Math.round(r.min_weight * 100)}~${Math.round(r.max_weight * 100)}% 비중으로 정해요.`),
+      h("li", {}, `원숭이는 같은 후보에서 ${r.monkey_picks}종목을 무작위로 골라 똑같이 나눠 사고, 결정 ${r.monkey_every}번마다 새로 찍어요.`),
+      h("li", {}, `존버는 첫날 ${benches}를 사서 계속 들고 가요.`),
+      h("li", {}, `비용은 ${costs}로 계산해요. 대략적인 가정값이에요.`),
+      h("li", {}, "시세와 뉴스는 네이버 증권에서 받아와요.")),
+    h("p", { class: "disclaimer" }, "전부 가짜 돈으로 하는 실험이에요. 여기 나온 종목은 투자 추천이 아니에요."));
+}
+
+/* ---------- 조립 ---------- */
+function renderMarket(m) {
+  const panel = h("section", { class: "panel", id: `panel-${m.key}`, role: "tabpanel", "aria-labelledby": `tab-${m.key}` });
+  const status = h("div", { class: "status" },
+    h("span", {}, m.sessions ? `리그 ${m.sessions}일째` : "개막일"),
+    h("span", {}, `${day(m.started)} 종가 기준 출발`),
+    m.pending && h("span", { class: "chip" }, `주문 대기: ${day(m.pending.decided_on)} 결정분, 다음 장 시가에 체결`),
+    m.live.provisional && h("span", { class: "chip live" }, `${day(m.live.date)} 장중 가격 반영`));
+  const race = raceCard(m);
+  panel.append(
+    status,
+    headline(m),
+    h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "리그 순위")), standings(m)),
+    race,
+    decisionCard(m) || "",
+    holdingsCard(m),
+    tradesCard(m) || "",
+    journalCard(m) || "");
+  panel._race = race;
+  return panel;
+}
+
+function boot() {
+  const tabs = document.getElementById("tabs");
+  const panels = document.getElementById("panels");
+  if (!DATA || !DATA.markets.length) {
+    panels.append(h("p", { class: "headline" }, "아직 리그 기록이 없어요. python -m trader run 을 먼저 돌려주세요."));
+    return;
+  }
+  const latest = DATA.markets.map(m => m.updated_at).filter(Boolean).sort().pop();
+  document.getElementById("stamp").textContent = latest ? `마지막 업데이트 ${stampText(latest)} (한국시간)` : "";
+  const views = DATA.markets.map(m => ({ m, panel: renderMarket(m) }));
+  const buttons = views.map(({ m }) => h("button", { class: "tab", role: "tab", id: `tab-${m.key}`, "aria-controls": `panel-${m.key}`, type: "button" }, `${m.name} 리그`));
+  tabs.append(...buttons);
+  views.forEach(v => panels.append(v.panel));
+
+  function select(key, focus) {
+    views.forEach(({ m, panel }, i) => {
+      const on = m.key === key;
+      panel.hidden = !on;
+      buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+      buttons[i].tabIndex = on ? 0 : -1;
+      if (on) { panel._race._draw(); if (focus) buttons[i].focus(); }
+    });
+    try { localStorage.setItem("league-tab", key); } catch (e) {}
+    if (location.hash !== `#${key}`) history.replaceState(null, "", `#${key}`);
+  }
+  buttons.forEach((b, i) => {
+    b.addEventListener("click", () => select(views[i].m.key));
+    b.addEventListener("keydown", e => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      select(views[(i + d + views.length) % views.length].m.key, true);
+    });
+  });
+  let first = location.hash.slice(1);
+  if (!views.some(v => v.m.key === first)) {
+    try { first = localStorage.getItem("league-tab"); } catch (e) { first = null; }
+  }
+  if (!views.some(v => v.m.key === first)) first = views[0].m.key;
+  select(first);
+
+  let raf = 0;
+  const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => views.forEach(v => { if (!v.panel.hidden) v.panel._race._draw(); })); };
+  window.addEventListener("resize", redraw);
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  if (mq.addEventListener) mq.addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  rulesFooter();
+}
+boot();
+</script>
+
+</body>
+</html>
