@@ -1,12 +1,15 @@
-"""DeepSeek 두뇌. 1단계에서 후보를 추리고, 2단계에서 뉴스·지표를 보고 최종 비중을 정한다."""
+"""DeepSeek 두뇌. 1단계에서 후보를 추리고, 2단계에서 뉴스·지표를 보고 최종 비중을 정한다.
+장중에는 사건이 생길 때마다 불려서 비중과 계획(손절·목표·트레일링·알림)을 계속 고친다."""
 
 import json
 import os
 import re
 
 from . import net
+from . import plans as planlib
 from .config import (
     DEFAULT_STOP_PCT,
+    MAX_ALERTS,
     MAX_POSITIONS,
     MAX_WEIGHT,
     MIN_WEIGHT,
@@ -14,9 +17,8 @@ from .config import (
     MODEL_REACT,
     MODEL_SCOUT,
     MODEL_TRIAGE,
+    NEXT_CHECK_RANGE,
     SHORTLIST_MAX,
-    STOP_RANGE,
-    TAKE_RANGE,
 )
 from .features import pct
 
@@ -114,7 +116,7 @@ def scout(ctx, candidates):
 
 
 def decide(ctx, details):
-    """2단계: 후보별 지표·뉴스를 보고 목표 비중을 정한다."""
+    """2단계: 후보별 지표·뉴스를 보고 목표 비중과 종목별 계획을 정한다."""
     lines = [
         f"기준일: {ctx['asof']} (이날 종가까지의 데이터)",
         "",
@@ -131,14 +133,18 @@ def decide(ctx, details):
         "- 위 [후보 상세]에 있는 코드만 쓸 수 있어.",
         "- 주문은 다음 거래일 시가에 체결돼. 계속 들고 갈 종목도 targets에 다시 넣어야 하고, "
         "빠진 보유 종목은 전부 팔아.",
-        f"- 종목마다 손절 비율 stop_pct(평단보다 이만큼 떨어지면 장중에 자동으로 팔아. 소수로 적고 "
-        f"{STOP_RANGE[0]}~{STOP_RANGE[1]} 사이, 예: 0.07은 7%)를 정해. 목표 수익 비율 take_pct({TAKE_RANGE[0]}~{TAKE_RANGE[1]})는 "
-        f"선택이야. stop_pct를 안 정하면 {DEFAULT_STOP_PCT:.0%} 손절이 기본으로 걸려.",
-        "- 장중에는 시세와 뉴스를 계속 지켜보다가 큰 일이 생기면 너를 다시 불러서 비중을 고치게 해줄 거야.",
+        "- 한 번에 다 살 필요는 없어. 처음엔 목표보다 적게 담고, 장중에 상황을 보면서 더 사거나 줄여도 돼.",
+        "- 종목마다 계획을 정해. 전부 비율은 소수로 적어 (예: 0.07은 7%).",
+        "  · stop_pct: 평단보다 이만큼 떨어지면 장중에 자동으로 전량 매도",
+        "  · take_pct: 평단보다 이만큼 오르면 take_frac만큼 자동으로 매도 (take_frac 0.5면 절반만 파는 분할 매도, 기본 1)",
+        "  · trail_pct: 오른 뒤 최고가에서 이만큼 빠지면 전량 매도 (따라 올라가는 손절)",
+        f"  · 손절도 트레일링도 안 정하면 {DEFAULT_STOP_PCT:.0%} 손절이 기본으로 걸려. 이미 들고 있는 종목은 안 적은 항목이 그대로 유지돼.",
+        "- 장중에는 시세와 뉴스를 계속 지켜보다가 큰 일이 생기거나 네가 걸어둔 알림이 울리면 너를 다시 불러. "
+        "그때마다 비중도 계획도 새로 고칠 수 있어.",
         "",
         '형식: {"market_view": "시장 전체에 대한 한두 문장", '
         '"targets": [{"code": "종목코드", "weight": 0.2, "reason": "왜 이 종목을 이 비중으로 드는지 한두 문장", '
-        '"stop_pct": 0.08, "take_pct": 0.2}], '
+        '"stop_pct": 0.08, "take_pct": 0.2, "take_frac": 0.5, "trail_pct": 0.1}], '
         '"cash_reason": "현금 비중을 이렇게 둔 이유 한 줄"}',
     ]
     result, meta = chat_json(MODEL_DECIDE, system_prompt(ctx), "\n".join(lines))
@@ -158,6 +164,8 @@ def clean_targets(raw, allowed):
     """AI가 준 비중을 규칙에 맞게 다듬는다."""
     merged, reasons = {}, {}
     for t in raw:
+        if not isinstance(t, dict):
+            continue
         code = str(t.get("code", "")).strip()
         try:
             w = float(t.get("weight", 0))
@@ -176,6 +184,20 @@ def clean_targets(raw, allowed):
     return targets, {c: reasons[c] for c in targets}
 
 
+def parse_plans(raw, codes):
+    """하루 결정에서 AI가 종목별로 적은 계획. {code: 계획 지시}"""
+    out = {}
+    for t in raw:
+        if not isinstance(t, dict):
+            continue
+        code = str(t.get("code", "")).strip()
+        if code in codes:
+            update = planlib.parse_update(t)
+            if update:
+                out[code] = update
+    return out
+
+
 def portfolio_text(ctx):
     cur = ctx["currency"]
     lines = [
@@ -186,7 +208,7 @@ def portfolio_text(ctx):
     for h in ctx["holdings"]:
         lines.append(
             f"- {h['name']}({h['code']}): 비중 {h['weight'] * 100:.1f}%, "
-            f"평단 대비 {pct(h['pnl'])}"
+            f"평단 대비 {pct(h['pnl'])}" + (f", 지금 계획: {h['plan']}" if h.get("plan") else "")
         )
     if not ctx["holdings"]:
         lines.append("- 보유 종목 없음")
@@ -268,66 +290,68 @@ def fmt_money(x, currency):
 # ---------------------------------------------------------------- 실시간(장중) 두뇌
 
 
-def _frac(x, lo, hi):
-    """0.07 이든 7 이든 0.07로. 범위 밖이면 끌어다 놓고, 이상한 값이면 None."""
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    if v > 1:
-        v /= 100
-    if v <= 0:
-        return None
-    return min(max(v, lo), hi)
-
-
-def parse_plans(raw, codes):
-    """AI가 종목별로 적어준 손절·목표 비율. {code: {"stop_pct", "take_pct"}}"""
-    plans = {}
-    for t in raw:
-        code = str(t.get("code", "")).strip()
-        if code not in codes:
-            continue
-        stop = _frac(t.get("stop_pct"), *STOP_RANGE)
-        take = _frac(t.get("take_pct"), *TAKE_RANGE)
-        if stop or take:
-            plans[code] = {"stop_pct": stop, "take_pct": take}
-    return plans
-
-
 def clean_actions(raw, allowed):
-    """장중에 AI가 바꾸겠다는 종목들을 규칙에 맞게 다듬는다. 안 맞으면 그 항목만 버린다."""
+    """장중에 AI가 바꾸겠다는 종목들을 다듬는다. 비중(target_weight)을 빼면 계획만 바꾸는 지시다."""
     out, seen = [], set()
     for a in raw:
+        if not isinstance(a, dict):
+            continue
         code = str(a.get("code", "")).strip()
         if code not in allowed or code in seen:
             continue
-        try:
-            w = float(a.get("target_weight", a.get("weight", 0)))
-        except (TypeError, ValueError):
-            continue
-        if w > 1.0:
-            w /= 100
-        if w < 0 or (0 < w < MIN_WEIGHT):
+        w = a.get("target_weight", a.get("weight"))
+        if w is not None:
+            w = planlib._num(w)
+            if w is None:
+                continue
+            if w > 1.0:
+                w /= 100
+            if w < 0 or (0 < w < MIN_WEIGHT):
+                continue
+            w = min(w, MAX_WEIGHT)
+        plan = planlib.parse_update(a)
+        if w is None and not plan:
             continue
         seen.add(code)
-        out.append(
-            {
-                "code": code,
-                "weight": min(w, MAX_WEIGHT),
-                "reason": str(a.get("reason", "")),
-                "stop_pct": _frac(a.get("stop_pct"), *STOP_RANGE),
-                "take_pct": _frac(a.get("take_pct"), *TAKE_RANGE),
-            }
-        )
+        out.append({"code": code, "weight": w, "reason": str(a.get("reason", "")), "plan": plan})
     return out
+
+
+def clean_alerts(raw, allowed, prices):
+    """AI가 걸겠다는 가격 알림. 바로 울릴 알림은 빼고 메모를 남긴다. (알림 목록, 메모 목록)"""
+    if not isinstance(raw, list):
+        return [], []
+    out, notes = [], []
+    for a in raw:
+        if not isinstance(a, dict):
+            continue
+        code = str(a.get("code", "")).strip()
+        if code not in allowed:
+            notes.append(f"{code}: 목록에 없는 종목이라 알림을 못 걸었어요")
+            continue
+        above, below = planlib._num(a.get("above")), planlib._num(a.get("below"))
+        above = above if above and above > 0 else None
+        below = below if below and below > 0 else None
+        price = prices.get(code)
+        if price and above and above <= price:
+            notes.append(f"{code}: 위쪽 알림 {above:,.2f}가 이미 지금 가격 이하라 뺐어요")
+            above = None
+        if price and below and below >= price:
+            notes.append(f"{code}: 아래쪽 알림 {below:,.2f}가 이미 지금 가격 이상이라 뺐어요")
+            below = None
+        if not above and not below:
+            continue
+        out.append({"code": code, "above": above, "below": below, "note": str(a.get("note", ""))[:200]})
+        if len(out) >= MAX_ALERTS:
+            break
+    return out, notes
 
 
 def system_prompt_live(ctx):
     return system_prompt(ctx) + (
-        " 지금은 장이 열려 있고 시세와 뉴스를 실시간으로 지켜보는 중이야. 새 사건이 생겼을 때만 너를 불러. "
-        "대부분의 소식은 가만히 있는 게 정답이니까, 별일 아니면 아무것도 안 바꿔도 돼. "
-        "너무 자주 사고팔면 수수료와 체결 미끄러짐으로 손해야."
+        " 지금은 장이 열려 있고 시세와 뉴스를 실시간으로 지켜보는 중이야. 일이 생기거나 네가 부탁한 때가 되면 너를 불러. "
+        "한 번 정한 계획을 고집할 필요 없어. 상황이 바뀌면 비중도 손절·목표도 바꾸고, 조금씩 나눠서 사고팔아도 돼. "
+        "반대로 별일 아니면 아무것도 안 바꿔도 되고, 너무 자주 사고팔면 수수료와 체결 미끄러짐으로 손해야."
     )
 
 
@@ -374,10 +398,21 @@ def triage(ctx, events):
     }
 
 
+def _alert_line(a, market):
+    parts = []
+    if a.get("below"):
+        parts.append(f"{fmt_price(a['below'], market)} 아래로 내려가면")
+    if a.get("above"):
+        parts.append(f"{fmt_price(a['above'], market)} 위로 올라가면")
+    note = f" (메모: {a['note']})" if a.get("note") else ""
+    return f"- {a.get('name') or a['code']}({a['code']}): {' 또는 '.join(parts)}{note}"
+
+
 def react(ctx, events, triage=None):
-    """장중에 사건을 보고 포트폴리오를 어떻게 바꿀지 정한다."""
+    """장중에 사건을 보고 비중과 계획을 어떻게 바꿀지 정한다."""
     market = ctx["market"]
     cur = ctx["currency"]
+    lo, hi = NEXT_CHECK_RANGE
     lines = [
         f"현재 시각 {ctx['now_local']} ({ctx['market_name']} 장중, 마감까지 {ctx['minutes_left']}분)",
         "",
@@ -392,15 +427,19 @@ def react(ctx, events, triage=None):
         f"평가금액 {fmt_money(ctx['equity'], cur)}, 현금 {fmt_money(ctx['cash'], cur)} ({ctx['cash'] / ctx['equity'] * 100:.1f}%)",
     ]
     for h in ctx["holdings"]:
-        stop = f", 손절가 {fmt_price(h['stop'], market)}" if h.get("stop") else ""
-        take = f", 목표가 {fmt_price(h['take'], market)}" if h.get("take") else ""
-        thesis = f"\n    산 이유: {h['thesis']}" if h.get("thesis") else ""
         lines.append(
             f"- {h['name']}({h['code']}): 비중 {h['weight'] * 100:.1f}%, 현재가 {fmt_price(h['price'], market)}, "
-            f"평단 대비 {pct(h['pnl'])}, 오늘 {pct(h['day'])}, 15분 {pct(h['r15'])}, 1시간 {pct(h['r60'])}{stop}{take}{thesis}"
+            f"평단 {fmt_price(h['avg'], market)} 대비 {pct(h['pnl'])}, 오늘 {pct(h['day'])}, "
+            f"15분 {pct(h['r15'])}, 1시간 {pct(h['r60'])}"
         )
+        if h.get("plan_text"):
+            lines.append(f"    계획: {h['plan_text']}")
+        if h.get("thesis"):
+            lines.append(f"    산 이유: {h['thesis']}")
     if not ctx["holdings"]:
         lines.append("- 보유 종목 없음")
+    lines += ["", "[걸어둔 알림]"]
+    lines += [_alert_line(a, market) for a in ctx.get("alerts") or []] or ["- 없음"]
     b = ctx["bench"]
     lines += [
         "",
@@ -418,26 +457,43 @@ def react(ctx, events, triage=None):
         f"[오늘 내 매매] {ctx['trades_today']}건, 수수료·세금 {fmt_money(ctx['fees_today'], cur)}. "
         f"체결가에는 미끄러짐 {ctx['slippage'] * 100:.2f}%가 불리한 쪽으로 붙어.",
         "",
+        "[쓸 수 있는 도구] 비율은 전부 소수로 적어 (예: 0.07은 7%).",
+        "1) 비중 바꾸기: target_weight에 새 목표 비중(전체 평가금액 대비)을 적어. 0이면 전량 매도. "
+        "한 번에 다 사고팔 필요 없어. 조금 사고 상황을 보며 더 사거나(분할 매수), 일부만 팔아도 돼(분할 매도).",
+        "2) 계획 고치기: target_weight를 빼고 아래 항목만 적으면 매매 없이 계획만 바뀌어. 안 적은 항목은 그대로 두고, 0을 적으면 꺼.",
+        "   - stop_price(또는 평단 대비 stop_pct): 이 가격 아래로 내려가면 자동으로 전량 매도. 수익이 났으면 평단 위로 올려서 이익을 지킬 수도 있어.",
+        "   - take_price(또는 평단 대비 take_pct)와 take_frac: 이 가격에 닿으면 take_frac만큼 자동으로 매도. 0.5면 절반만. 팔고 나면 너를 다시 불러서 남은 물량을 어떻게 할지 물어볼게.",
+        "   - trail_pct: 오른 뒤 최고가에서 이만큼 빠지면 전량 매도 (따라 올라가는 손절).",
+        f"   - 손절도 트레일링도 없으면 평단 대비 {DEFAULT_STOP_PCT:.0%} 손절이 자동으로 걸려.",
+        "3) 알림 걸기: alerts에 가격을 적으면 그 가격 위로(above) 올라가거나 아래로(below) 내려가면 너를 다시 불러. "
+        "note에 그때 하려는 일을 적어두면 같이 보여줄게. 예: 더 떨어지면 나눠서 더 살지 검토. "
+        f"알림은 한 번 울리면 사라지고 최대 {MAX_ALERTS}개야. alerts를 적으면 지금 걸린 알림 전체가 그 목록으로 바뀌고, 안 적으면 그대로야.",
+        f"4) 다음 점검: next_check_min({lo}~{hi})에 아무 일이 없어도 다시 볼 시간을 분으로 적어. 불안하면 짧게, 조용하면 길게.",
+        "",
         "[규칙]",
-        "- actions에는 바꾸고 싶은 종목만 넣어. 안 넣은 보유 종목은 그대로 들고 가. 바꿀 게 없으면 \"actions\": [].",
-        "- target_weight는 그 종목의 새 목표 비중(전체 평가금액 대비)이야. 0이면 전량 매도.",
         f"- 종목당 비중은 {MIN_WEIGHT} 이상 {MAX_WEIGHT} 이하, 최대 {MAX_POSITIONS}종목.",
-        f"- 새로 사거나 비중을 늘릴 때는 stop_pct(평단보다 이만큼 떨어지면 자동으로 팔아. 소수로 적고 "
-        f"{STOP_RANGE[0]}~{STOP_RANGE[1]} 사이, 예: 0.07은 7%)를 꼭 정해. take_pct(목표 수익률)는 선택이야. "
-        f"안 정하면 {DEFAULT_STOP_PCT:.0%} 손절이 기본으로 걸려.",
+        "- actions에는 바꿀 종목만 넣어. 안 넣은 보유 종목은 비중도 계획도 그대로야. 바꿀 게 없으면 \"actions\": [].",
         "- 코드는 [내 포트폴리오], [갈아탈 후보], [오늘 등락 상위·하위]에 나온 것만 쓸 수 있어.",
-        "- 이미 손절가가 걸려 있는 종목은 그 가격에 닿으면 자동으로 팔려. 그 전에 네가 먼저 팔 이유가 있을 때만 팔아.",
+        f"- 오늘 이번 점검 뒤에 남은 점검은 {ctx['reviews_left']}번이야. 다 쓰면 손절·목표가·트레일링만 자동으로 돌아가고 알림은 무시돼.",
         "",
         '형식: {"assessment": "지금 상황에 대한 판단 두세 문장", '
-        '"actions": [{"code": "종목코드", "target_weight": 0.12, "reason": "왜 이렇게 바꾸는지 한두 문장", '
-        '"stop_pct": 0.07, "take_pct": 0.15}], '
-        '"watch": ["더 지켜볼 종목코드"], "cash_reason": "현금 비중에 대한 한 줄"}',
+        '"actions": [{"code": "종목코드", "target_weight": 새 비중(선택), "reason": "왜 바꾸는지 한두 문장", '
+        '"stop_price": 손절가(선택), "take_price": 목표가(선택), "take_frac": 목표가에서 팔 비율(선택), "trail_pct": 트레일링 비율(선택)}], '
+        '"alerts": [{"code": "종목코드", "below": 가격(선택), "above": 가격(선택), "note": "그때 하려는 일"}], '
+        '"next_check_min": 분, "cash_reason": "현금 비중에 대한 한 줄"}',
     ]
     result, meta = chat_json(MODEL_REACT, system_prompt_live(ctx), "\n".join(lines))
+    allowed = set(ctx["allowed"])
+    alerts, alert_notes = (None, [])
+    if "alerts" in result:
+        alerts, alert_notes = clean_alerts(result.get("alerts"), allowed, ctx["ref_prices"])
+    nc = planlib._num(result.get("next_check_min"))
     return {
         "assessment": str(result.get("assessment", "")),
-        "actions": clean_actions(result.get("actions") or [], set(ctx["allowed"])),
-        "watch": [str(c) for c in (result.get("watch") or [])][:6],
+        "actions": clean_actions(result.get("actions") or [], allowed),
+        "alerts": alerts,
+        "alert_notes": alert_notes,
+        "next_check_min": int(min(max(nc, lo), hi)) if nc else None,
         "cash_reason": str(result.get("cash_reason", "")),
         "meta": meta,
     }

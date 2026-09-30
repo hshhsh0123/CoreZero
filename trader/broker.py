@@ -67,6 +67,14 @@ def exit_position(player, code, price, names, cfg, day, slippage=0.0, at=None, t
     return _sell(player, code, pos["shares"], price, names, cfg, day, slippage, at, tag)
 
 
+def reduce_position(player, code, qty, price, names, cfg, day, slippage=0.0, at=None, tag=None):
+    """한 종목을 qty주만 판다 (분할 매도). 가진 것보다 많으면 전량. 없으면 None."""
+    pos = player["positions"].get(code)
+    if not pos or not price or qty <= 0:
+        return None
+    return _sell(player, code, min(int(qty), pos["shares"]), price, names, cfg, day, slippage, at, tag)
+
+
 def _sell(player, code, qty, price, names, cfg, day, slippage, at, tag):
     pos = player["positions"][code]
     exec_price = price * (1 - slippage)

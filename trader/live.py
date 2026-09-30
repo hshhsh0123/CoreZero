@@ -3,9 +3,13 @@
 시세(20초)와 뉴스(2분)는 싸니까 계속 확인하고, 사건이 터질 때만 AI를 깨운다.
 
   시세 스냅샷
-    → AI가 정해둔 손절·목표가 확인 (AI 호출 없이 바로 집행)
-    → 급변·뉴스 감지 → (뉴스만이면 flash가 먼저 거름) → v4-pro가 포트폴리오 조정
+    → AI가 정해둔 계획 확인: 손절, 따라 올라가는 손절, 목표가 분할 매도 (AI 호출 없이 바로 집행)
+    → AI가 걸어둔 가격 알림, 급변, 뉴스 감지
+    → (뉴스만이면 flash가 먼저 거름) → v4-pro가 비중과 계획을 다시 정함
     → AI 답이 돌아온 그 순간의 시세로 체결
+
+AI는 한 번 정한 걸 고집하지 않는다. 점검 때마다 비중을 조금씩 늘리거나 줄이고, 손절·목표를 옮기고,
+다음에 불러줄 가격(알림)과 시간(다음 점검)을 스스로 정한다. 장이 열리면 오늘 계획을 한 번 점검한다.
 
 AI 호출은 별도 스레드에서 돌아서, AI가 생각하는 동안에도 시세 확인과 손절은 멈추지 않는다.
 장이 끝나면 기존 하루 정산(league.run)을 이어서 돌려 내일 주문까지 정한다.
@@ -22,16 +26,16 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from . import brain, broker, data, features, league, quotes, triggers
+from . import plans as planlib
 from .config import (
     LIVE,
     MARKET_NEWS,
     MARKETS,
     MAX_POSITIONS,
-    MAX_WEIGHT,
-    MIN_WEIGHT,
     PLAYERS,
     SETTLE_MINUTES,
     SLIPPAGE,
+    TRADE_THRESHOLD,
 )
 
 RUNTIME = league.ROOT / "runtime"
@@ -135,6 +139,8 @@ class LiveEngine:
         self.last_react_at = None
         self.last_job_at = None
         self.last_news_at = None
+        self.next_check_at = None
+        self.open_reviewed = False
         self.opened_at = None
         self.holiday = False
         self.closed_ticks = 0
@@ -235,15 +241,17 @@ class LiveEngine:
         self.closed_ticks = 0
         if self.opened_at is None:
             self.opened_at = now
-            self.last_react_at = now
+            self.next_check_at = now + timedelta(minutes=LIVE["heartbeat_min"])
             self._feed("info", f"{self.cfg['name']}장 감시 시작 (시세 {LIVE['poll_seconds']}초마다, 뉴스 {LIVE['news_seconds']}초마다)", now)
         self.last_q = q
         self.hist.add(now, q)
         for name, fn in (
             ("일봉", lambda: self._load_daily()),
             ("시가 체결", lambda: self._fill_pending(now, local)),
+            ("장 시작 점검", lambda: self._open_review(now, local)),
             ("AI 결과 반영", lambda: self._apply_results(q, now, local)),
             ("손절·목표", lambda: self._enforce_plans(q, now, local)),
+            ("알림", lambda: self._check_alerts(q, now, local)),
             ("급변 감지", lambda: self._detect(q, now, local)),
             ("뉴스", lambda: self._poll_news(q, now, local)),
             ("AI 호출", lambda: self._maybe_review(q, now, local)),
@@ -314,8 +322,12 @@ class LiveEngine:
         league.save_state(self.market, self.st)
         self._feed("fill", "어제 종가 때 정한 주문을 오늘 시가에 체결했어요", now)
 
-    # ------------------------------------------------------------------ 손절·목표 (AI 호출 없이 즉시)
+    # ------------------------------------------------------------------ 계획 집행 (AI 호출 없이 즉시)
+    def _fmt(self, x):
+        return brain.fmt_price(x, self.market)
+
     def _enforce_plans(self, q, now, local):
+        """손절, 따라 올라가는 손절, 목표가 분할 매도. 팔고 나면 AI를 불러 남은 계획을 다시 정하게 한다."""
         ai = self.st["players"]["ai"]
         plans = self.st["plans"]
         day = local.date().isoformat()
@@ -325,36 +337,93 @@ class LiveEngine:
             if not plan or not qq or not self._tradable(qq, now):
                 continue
             price = qq["price"]
-            hit = None
-            if plan.get("stop_pct") and price <= pos["avg"] * (1 - plan["stop_pct"]):
-                hit = "stop"
-            elif plan.get("take_pct") and price >= pos["avg"] * (1 + plan["take_pct"]):
-                hit = "take"
+            changed |= planlib.update_high(plan, price)
+            hit = planlib.check(plan, price)
             if not hit:
                 self.breach.pop(code, None)
                 continue
-            prev_hit, n = self.breach.get(code, (hit, 0))
-            n = n + 1 if prev_hit == hit else 1
-            self.breach[code] = (hit, n)
+            kind, level = hit
+            prev_kind, n = self.breach.get(code, (kind, 0))
+            n = n + 1 if prev_kind == kind else 1
+            self.breach[code] = (kind, n)
             if n < LIVE["stop_confirm_ticks"]:
                 continue
-            avg, name = pos["avg"], pos["name"]
-            fill = broker.exit_position(
-                ai, code, price, self.st["names"], self.cfg, day,
-                slippage=SLIPPAGE[self.market], at=now.isoformat(), tag=hit,
-            )
             self.breach.pop(code, None)
+            avg, name, shares = pos["avg"], pos["name"], pos["shares"]
+            qty = shares
+            if kind == "take":
+                frac = plan.get("take_frac") or 1.0
+                qty = shares if frac >= 0.999 else max(1, math.floor(shares * frac))
+                eq = broker.equity(ai, {c: q[c]["price"] for c in ai["positions"] if c in q})
+                if (shares - qty) * price < eq * TRADE_THRESHOLD:
+                    qty = shares  # 남는 게 너무 적으면 다 판다
+            fill = broker.reduce_position(
+                ai, code, qty, price, self.st["names"], self.cfg, day,
+                slippage=SLIPPAGE[self.market], at=now.isoformat(), tag=kind,
+            )
             if not fill:
                 continue
             changed = True
             self.counts["trades"] += 1
-            label = "손절" if hit == "stop" else "목표가 도달"
-            text = f"{name} {label}: 평단 {avg:,.2f} 대비 {price / avg - 1:+.1%}에서 전량 매도 (체결 {fill['price']:,.2f})"
-            self._feed(hit, text, now, code=code, fill=fill)
-            self._add_event(now, local, hit, text, code=code, name=name)
+            pnl = f"평단 대비 {price / avg - 1:+.1%}"
+            left = ai["positions"].get(code, {}).get("shares", 0)
+            if kind == "stop":
+                text = f"{name} 손절: {self._fmt(level)} 아래로 내려가서 전량 매도 ({pnl})"
+            elif kind == "trail":
+                text = (f"{name} 따라 올라가는 손절: 최고가 {self._fmt(plan['high'])}에서 "
+                        f"{plan['trail_pct']:.0%} 빠져서 전량 매도 ({pnl})")
+            elif left:
+                text = f"{name} 목표가 {self._fmt(level)} 도달: {fill['shares']:,}주 팔고 {left:,}주 남음 ({pnl}). 남은 물량 계획을 다시 정해줘"
+                plan.pop("take", None)  # 다음 목표는 AI가 다시 정한다
+                plan.pop("take_frac", None)
+            else:
+                text = f"{name} 목표가 {self._fmt(level)} 도달: 전량 매도 ({pnl})"
+            self._feed(kind, text, now, code=code, fill=fill)
+            self._add_event(now, local, kind, text, code=code, name=name, quiet=True)
         if changed:
             league.sync_plans(self.st)
             league.save_state(self.market, self.st)
+
+    def _check_alerts(self, q, now, local):
+        """AI가 걸어둔 가격 알림. 울리면 AI를 부르고 그 알림은 지운다."""
+        alerts = self.st.get("alerts") or []
+        keep, fired = [], []
+        for a in alerts:
+            qq = q.get(a["code"])
+            if not qq:
+                keep.append(a)
+                continue
+            price = qq["price"]
+            if a.get("above") and price >= a["above"]:
+                fired.append((a, f"{self._fmt(a['above'])} 위로 올라옴"))
+            elif a.get("below") and price <= a["below"]:
+                fired.append((a, f"{self._fmt(a['below'])} 아래로 내려옴"))
+            else:
+                keep.append(a)
+        if not fired:
+            return
+        self.st["alerts"] = keep
+        for a, what in fired:
+            name = self.st["names"].get(a["code"]) or q[a["code"]]["name"]
+            note = f" 네가 남긴 메모: {a['note']}" if a.get("note") else ""
+            self._add_event(
+                now, local, "alert", f"{name} 알림: {what} (지금 {self._fmt(q[a['code']]['price'])}).{note}",
+                code=a["code"], name=name,
+            )
+        league.save_state(self.market, self.st)
+
+    def _open_review(self, now, local):
+        """장이 열리고 시가 체결까지 끝나면, 오늘 계획을 한 번 점검하게 한다."""
+        if self.open_reviewed or not LIVE.get("open_review", True):
+            return
+        pend = self.st.get("pending")
+        if pend and pend["decided_on"] < local.date().isoformat():
+            return  # 시가 체결을 기다리는 중
+        self.open_reviewed = True
+        self._add_event(
+            now, local, "open",
+            "장이 열렸어. 시가를 보고 오늘 계획(비중, 손절·목표, 알림, 다음 점검)을 정해줘", quiet=True,
+        )
 
     # ------------------------------------------------------------------ 감지
     def _add_event(self, now, local, kind, text, code=None, name=None, data=None, quiet=False):
@@ -446,10 +515,10 @@ class LiveEngine:
         if self.last_job_at and (now - self.last_job_at).total_seconds() < LIVE["job_gap_seconds"]:
             return
         if not self.events:
-            idle = self.last_react_at and (now - self.last_react_at) >= timedelta(minutes=LIVE["heartbeat_min"])
-            if not idle or self._minutes_left(local) < 15:
+            due = self.next_check_at and now >= self.next_check_at
+            if not due or self._minutes_left(local) < 15:
                 return
-            self._add_event(now, local, "heartbeat", f"{LIVE['heartbeat_min']}분 동안 특별한 일이 없어서 정기 점검", quiet=True)
+            self._add_event(now, local, "heartbeat", "네가 정한 다음 점검 시간이 됐어 (그동안 특별한 일은 없었어)", quiet=True)
         only_news = all(e["kind"] == "news" for e in self.events)
         if only_news:
             if self.counts["triages"] >= LIVE["max_triages_per_day"]:
@@ -517,8 +586,7 @@ class LiveEngine:
                 "price": prices[code], "weight": pos["shares"] * prices[code] / eq,
                 "pnl": prices[code] / pos["avg"] - 1, "day": qq.get("pct"),
                 "r15": self.hist.ret(code, 900, now), "r60": self.hist.ret(code, 3600, now),
-                "stop": pos["avg"] * (1 - plan["stop_pct"]) if plan.get("stop_pct") else None,
-                "take": pos["avg"] * (1 + plan["take_pct"]) if plan.get("take_pct") else None,
+                "plan_text": planlib.describe(plan, self._fmt) if plan else None,
                 "thesis": self._thesis(code),
             })
         bcode = cfg["benchmark"]["code"]
@@ -547,7 +615,10 @@ class LiveEngine:
             standings.append((label, live_eq / cap - 1))
         today = local.date().isoformat()
         todays = [t for t in ai["trades"] if t.get("date") == today]
-        allowed = set(ai["positions"]) | {c["code"] for c in candidates} | {m["code"] for m in movers_up + movers_down}
+        alerts = [{**a, "name": st["names"].get(a["code"]) or (q.get(a["code"]) or {}).get("name")}
+                  for a in st.get("alerts") or []]
+        allowed = (set(ai["positions"]) | {c["code"] for c in candidates}
+                   | {m["code"] for m in movers_up + movers_down} | {a["code"] for a in alerts})
         ref = {c: q[c]["price"] for c in allowed if c in q}
         ref.update(prices)
         return {
@@ -558,6 +629,7 @@ class LiveEngine:
             "equity": eq, "cash": ai["cash"], "holdings": holdings, "bench": bench,
             "movers_up": movers_up, "movers_down": movers_down, "candidates": candidates,
             "standings": standings, "trades_today": len(todays), "fees_today": sum(t["cost"] for t in todays),
+            "alerts": alerts, "reviews_left": max(0, LIVE["max_reviews_per_day"] - self.counts["reviews"] - 1),
             "allowed": sorted(allowed), "ref_prices": ref,
         }
 
@@ -571,13 +643,21 @@ class LiveEngine:
             self.job_running = False
             if res.get("error"):
                 self.last_react_at = now
+                self.next_check_at = max(self.next_check_at or now, now + timedelta(minutes=15))
                 self._feed("error", f"AI 호출 실패: {res['error']}", now)
+                # 중요한 사건은 한 번 더 기회를 준다 (뉴스는 버린다)
+                retry = [e for e in res["events"] if e["kind"] != "news" and not e.get("retried")]
+                for e in retry:
+                    e["retried"] = True
+                self.events = (retry + self.events)[-30:]
             elif res.get("ignored"):
                 tri = res["triage"]
                 self._feed("triage", f"새 소식을 훑어봤는데 매매할 일은 아니래요: {tri.get('reason', '')}", now, triage=tri)
             else:
                 self.counts["reviews"] += 1
                 self.last_react_at = now
+                minutes = res.get("next_check_min") or LIVE["heartbeat_min"]
+                self.next_check_at = now + timedelta(minutes=minutes)
                 self._execute_react(res, q, now, local)
 
     def _execute_react(self, res, q, now, local):
@@ -593,11 +673,19 @@ class LiveEngine:
         eq = broker.equity(ai, prices)
         cur_w = {c: p["shares"] * prices[c] / eq for c, p in ai["positions"].items()}
         targets, touched, notes = dict(cur_w), {}, []
+        plan_updates, plan_only = {}, {}
         limit_hit = self.counts["trades"] >= LIVE["max_live_trades_per_day"]
         for a in res["actions"]:
             code, w = a["code"], a["weight"]
             qq = q.get(code)
             name = names.get(code) or (qq or {}).get("name") or code
+            if w is None:  # 매매 없이 계획만 고치기
+                if code in ai["positions"]:
+                    plan_updates[code] = a["plan"]
+                    plan_only[code] = a
+                else:
+                    notes.append(f"{name}: 들고 있지 않은 종목이라 계획만 바꿀 수는 없어서 건너뜀")
+                continue
             if not qq or not self._tradable(qq, now):
                 notes.append(f"{name}: 지금은 거래할 수 없어서 건너뜀")
                 continue
@@ -636,22 +724,35 @@ class LiveEngine:
             slippage=SLIPPAGE[self.market], at=now.isoformat(), tag="react",
         )
         self.counts["trades"] += len(fills)
-        new_plans = {
-            c: {"stop_pct": a["stop_pct"], "take_pct": a["take_pct"]}
+        for c, a in touched.items():
+            if a["plan"]:
+                plan_updates[c] = a["plan"]
+        live_prices = {c: q[c]["price"] for c in ai["positions"] if c in q}
+        notes += league.sync_plans(self.st, plan_updates, live_prices)
+        if res.get("alerts") is not None:
+            self.st["alerts"] = [
+                {**a, "name": names.get(a["code"]) or (q.get(a["code"]) or {}).get("name") or a["code"]}
+                for a in res["alerts"]
+            ]
+        notes += res.get("alert_notes") or []
+        plans_now = self.st["plans"]
+        actions = [
+            {"code": c, "name": names.get(c, c), "from": round(cur_w.get(c, 0), 4), "to": round(targets.get(c, 0), 4),
+             "reason": a["reason"], "plan": plans_now.get(c)}
             for c, a in touched.items()
-            if a.get("stop_pct") or a.get("take_pct") or c not in self.st["plans"]
-        }
-        league.sync_plans(self.st, new_plans)
+        ] + [
+            {"code": c, "name": names.get(c, c), "from": round(cur_w.get(c, 0), 4), "to": None,
+             "reason": a["reason"], "plan": plans_now.get(c)}
+            for c, a in plan_only.items()
+        ]
         rec = {
             "time": now.isoformat(), "date": day,
             "trigger": [e["text"] for e in res["events"]][:6],
-            "assessment": res.get("assessment", ""), "watch": res.get("watch", []),
+            "assessment": res.get("assessment", ""),
             "cash_reason": res.get("cash_reason", ""),
-            "actions": [
-                {"code": c, "name": names.get(c, c), "from": round(cur_w.get(c, 0), 4), "to": round(targets.get(c, 0), 4),
-                 "reason": a["reason"], "stop_pct": a["stop_pct"], "take_pct": a["take_pct"]}
-                for c, a in touched.items()
-            ],
+            "actions": actions,
+            "alerts": self.st["alerts"] if res.get("alerts") is not None else None,
+            "next_check_min": res.get("next_check_min"),
             "fills": fills, "notes": notes, "seconds": res.get("seconds"),
             "model": (res.get("meta") or {}).get("model"), "triage": res.get("triage"),
         }
@@ -660,9 +761,18 @@ class LiveEngine:
         league.save_state(self.market, self.st)
         if fills:
             summary = ", ".join(f"{f['name']} {'매수' if f['side'] == 'buy' else '매도'} {f['shares']}주" for f in fills)
+        elif plan_updates:
+            summary = "매매 없이 계획만 고쳤어요"
         else:
             summary = "지켜보기로 했어요 (매매 없음)"
-        self._feed("react", f"AI 판단 ({res.get('seconds')}초): {summary}. {res.get('assessment', '')}", now, reaction=rec)
+        extra = []
+        if res.get("alerts") is not None:
+            extra.append(f"알림 {len(res['alerts'])}개")
+        extra.append(f"다음 점검 {res.get('next_check_min') or LIVE['heartbeat_min']}분 뒤")
+        self._feed(
+            "react", f"AI 판단 ({res.get('seconds')}초): {summary}. {res.get('assessment', '')} ({', '.join(extra)})",
+            now, reaction=rec,
+        )
         for n in notes:
             self._feed("info", n, now)
 
@@ -708,6 +818,8 @@ class LiveEngine:
             "movers_down": [{"code": v["code"], "name": v["name"], "day": v["pct"]} for v in ranked[:5]],
             "job_running": self.job_running, "queued_events": len(self.events),
             "last_react_at": self.last_react_at.isoformat() if self.last_react_at else None,
+            "next_check_at": self.next_check_at.isoformat() if self.next_check_at else None,
+            "alerts": self.st.get("alerts") or [],
             "heartbeat_min": LIVE["heartbeat_min"], "feed": self.feed[-40:], "next_wake": None,
         })
         league.atomic_write(self._file("live"), json.dumps(snap, ensure_ascii=False))

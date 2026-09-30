@@ -63,9 +63,13 @@ MODEL_REACT = "deepseek-v4-pro"   # 장중에 포트폴리오를 고치는 모�
 # 체결가에 불리한 방향으로 붙이는 미끄러짐. 호가창을 못 보니까 대략적인 가정값이다.
 SLIPPAGE = {"kr": 0.0005, "us": 0.0003}
 
-DEFAULT_STOP_PCT = 0.10          # AI가 손절을 안 정한 종목에 거는 기본 손절 (평단 대비)
-STOP_RANGE = (0.02, 0.30)
+DEFAULT_STOP_PCT = 0.10          # 손절도 트레일링도 없는 종목에 거는 기본 손절 (평단 대비)
+STOP_RANGE = (0.02, 0.30)        # AI가 비율로 줄 때 허용 범위
 TAKE_RANGE = (0.03, 1.00)
+TRAIL_RANGE = (0.02, 0.30)       # 따라 올라가는 손절: 최고가 대비 이만큼 빠지면 판다
+TAKE_FRAC_RANGE = (0.1, 1.0)     # 목표가에서 팔 비율 (0.5면 절반만 파는 분할 매도)
+MAX_ALERTS = 10                  # AI가 걸어둘 수 있는 가격 알림 수
+NEXT_CHECK_RANGE = (15, 120)     # AI가 정하는 다음 정기 점검까지 시간(분)
 
 LIVE = {
     "poll_seconds": 20,          # 시세 확인 주기
@@ -81,9 +85,10 @@ LIVE = {
     "index_day_step": 0.01,      # 같은 알림 단계 (벤치마크)
     "review_cooldown_min": 5,    # AI가 매매를 판단하는 사이의 최소 간격
     "stock_cooldown_min": 15,    # 같은 종목·같은 종류 알림을 다시 보내기까지 최소 간격
-    "heartbeat_min": 90,         # 아무 일 없어도 이 간격마다 한 번은 AI가 점검
+    "heartbeat_min": 90,         # AI가 다음 점검 시간을 안 정했을 때 기본 간격
+    "open_review": True,         # 장이 열리고 시가 체결이 끝나면 AI가 오늘 계획을 한 번 점검
     "job_gap_seconds": 60,       # AI 호출 사이의 최소 간격 (실패해도 폭주 방지)
-    "max_reviews_per_day": 12,
+    "max_reviews_per_day": 20,
     "max_triages_per_day": 80,
     "max_live_trades_per_day": 30,
     "stop_confirm_ticks": 2,     # 손절·목표가를 이 횟수 연속 넘겨야 집행 (튀는 시세 방지)

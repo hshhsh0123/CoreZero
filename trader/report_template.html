@@ -493,7 +493,8 @@ function decisionBody(j, m, compact) {
     const items = j.targets.map(t => h("li", { class: "pick" },
       h("span", { class: "pick-name" }, t.name, h("span", { class: "code" }, t.code)),
       h("span", { class: "wbar" }, h("span", { class: "track" }, h("span", { class: "fill", style: `width: ${Math.min(100, t.weight / scale * 100)}%` })), h("span", { class: "pctv" }, `${Math.round(t.weight * 100)}%`)),
-      t.reason && h("p", { class: "pick-why" }, t.reason)));
+      t.reason && h("p", { class: "pick-why" }, t.reason),
+      planPct(t.plan) && h("p", { class: "meta pick-why" }, planPct(t.plan))));
     const cash = Math.max(0, 1 - total);
     items.push(h("li", { class: "pick cash" },
       h("span", { class: "pick-name" }, "현금"),
@@ -543,7 +544,7 @@ function holdingsCard(m) {
       h("span", { class: "n", title: x.name }, x.name),
       h("span", { class: "w" }, `${(x.weight * 100).toFixed(1)}%`),
       h("span", { class: "d" }, h("span", {}, `${x.shares.toLocaleString("ko-KR")}주 · 평단 ${price(x.avg, m.currency)}`), delta(x.pnl)),
-      x.stop ? h("span", { class: "p" }, `손절 ${price(x.stop, m.currency)}` + (x.take ? ` · 목표 ${price(x.take, m.currency)}` : "") + (x.plan_default ? " (기본 손절)" : "")) : null));
+      planLine(x, m.currency) ? h("span", { class: "p" }, planLine(x, m.currency)) : null));
     items.push(h("li", { class: "hitem" },
       h("span", { class: "n" }, "현금"),
       h("span", { class: "w" }, `${(p.cash / p.equity * 100).toFixed(1)}%`),
@@ -592,7 +593,9 @@ function rulesFooter() {
     h("ul", {},
       h("li", {}, `셋 다 같은 돈으로 시작해요: ${caps}.`),
       h("li", {}, "결정은 그 시점에 알 수 있는 정보로만 해요. 장 마감 뒤에는 확정된 종가까지 보고 정하고, 그 주문은 다음 거래일 시가에 체결돼요."),
-      h("li", {}, `장중에는 시세를 ${r.poll_seconds}초마다, 뉴스를 ${r.news_seconds}초마다 확인하다가 급변이나 새 소식이 있을 때만 AI를 깨워요. AI가 정해둔 손절가·목표가는 AI 호출 없이 바로 집행하고, 체결은 AI가 답한 그 순간의 시세로 해요.`),
+      h("li", {}, `장중에는 시세를 ${r.poll_seconds}초마다, 뉴스를 ${r.news_seconds}초마다 확인하다가 급변, 새 소식, AI가 걸어둔 가격 알림이 울리면 AI를 깨워요. 체결은 AI가 답한 그 순간의 시세로 해요.`),
+      h("li", {}, "AI는 한 번 정한 걸 고집하지 않아요. 점검 때마다 비중을 조금씩 늘리거나 줄이고(분할 매수·매도), 손절가·목표가·트레일링을 옮기고, 다음에 불러줄 가격과 시간을 스스로 정해요. 장이 열리면 오늘 계획을 한 번 점검해요."),
+      h("li", {}, `손절, 따라 올라가는 손절, 목표가 매도는 AI 호출 없이 바로 집행하고, 판 뒤에는 AI가 남은 계획을 다시 정해요. 손절도 트레일링도 없으면 평단 대비 10% 손절이 기본으로 걸려요. AI 점검은 하루 ${r.max_reviews}번까지예요.`),
       h("li", {}, `AI는 ${r.model}이에요. 시총 상위 후보(${univ})를 보고 15개로 추린 다음, 뉴스와 지표를 읽고 최대 ${r.max_positions}종목을 종목당 ${Math.round(r.min_weight * 100)}~${Math.round(r.max_weight * 100)}% 비중으로 정해요.`),
       h("li", {}, `원숭이는 같은 후보에서 ${r.monkey_picks}종목을 무작위로 골라 똑같이 나눠 사고, 결정 ${r.monkey_every}번마다 새로 찍어요.`),
       h("li", {}, `존버는 첫날 ${benches}를 사서 계속 들고 가요.`),
@@ -603,11 +606,43 @@ function rulesFooter() {
 
 /* ---------- 실시간 ---------- */
 const KIND = {
-  react: ["AI 판단", "◆"], stop: ["손절", "▼"], take: ["목표 도달", "▲"], fill: ["체결", "●"],
-  fast_move: ["급변", "!"], index_move: ["지수 급변", "!"], day_step: ["오늘 등락", "±"],
-  news: ["뉴스", "≡"], triage: ["뉴스 심사", "○"], info: ["알림", "i"], error: ["오류", "×"], daily: ["정산", "✓"],
+  react: ["AI 판단", "◆"], stop: ["손절", "▼"], trail: ["트레일링", "▼"], take: ["목표 도달", "▲"], fill: ["체결", "●"],
+  alert: ["AI 알림", "◎"], fast_move: ["급변", "!"], index_move: ["지수 급변", "!"], day_step: ["오늘 등락", "±"],
+  news: ["뉴스", "≡"], triage: ["뉴스 심사", "○"], info: ["안내", "i"], error: ["오류", "×"], daily: ["정산", "✓"],
 };
-const LOUD = new Set(["react", "stop", "take", "fill", "fast_move", "index_move", "day_step", "error", "daily"]);
+const LOUD = new Set(["react", "stop", "trail", "take", "fill", "alert", "fast_move", "index_move", "day_step", "error", "daily"]);
+
+/* 계획 한 줄: 손절 · 따라 올라가는 손절 · 목표가(분할 매도) */
+function planLine(p, cur) {
+  if (!p) return "";
+  const bits = [];
+  if (p.stop) bits.push(`손절 ${price(p.stop, cur)}` + (p.plan_default || p.default ? " (기본)" : ""));
+  if (p.trail_pct) {
+    const ts = p.trail_stop || (p.high ? p.high * (1 - p.trail_pct) : null);
+    bits.push(`트레일링 ${Math.round(p.trail_pct * 100)}%` + (ts ? ` (지금 ${price(ts, cur)})` : ""));
+  }
+  if (p.take) {
+    const frac = p.take_frac || 1;
+    bits.push(`목표 ${price(p.take, cur)}` + (frac < 0.999 ? `에서 ${Math.round(frac * 100)}% 매도` : ""));
+  }
+  return bits.join(" · ");
+}
+/* 하루 결정 때 AI가 비율로 정한 계획 (체결 전이라 평단 대비 %) */
+function planPct(p) {
+  if (!p) return "";
+  const n = v => Math.round(v * 100);
+  const bits = [];
+  if (p.stop_pct) bits.push(`손절 -${n(p.stop_pct)}%`);
+  if (p.trail_pct) bits.push(`트레일링 ${n(p.trail_pct)}%`);
+  if (p.take_pct) bits.push(`목표 +${n(p.take_pct)}%` + (p.take_frac && p.take_frac < 0.999 ? `에서 ${n(p.take_frac)}% 매도` : ""));
+  return bits.length ? "계획: " + bits.join(" · ") : "";
+}
+function alertLine(a, cur) {
+  const parts = [];
+  if (a.below) parts.push(`${price(a.below, cur)} 아래로`);
+  if (a.above) parts.push(`${price(a.above, cur)} 위로`);
+  return `${a.name || a.code}: ${parts.join(" 또는 ")}` + (a.note ? ` — ${a.note}` : "");
+}
 const FEED = { all: false };
 
 function localTime(iso, tz) {
@@ -760,14 +795,20 @@ function drawIntraday(host, m) {
 function reactionDetails(f, m) {
   const r = f.reaction;
   const side = x => `${x.name} ${x.side === "buy" ? "매수" : "매도"}`;
-  const summary = (r.fills && r.fills.length ? r.fills.map(side).join(", ") : "지켜보기로 함") + (r.assessment ? ` · ${r.assessment}` : "");
+  const what = r.fills && r.fills.length ? r.fills.map(side).join(", ")
+    : (r.actions || []).length ? "계획만 고침" : "지켜보기로 함";
+  const summary = what + (r.assessment ? ` · ${r.assessment}` : "");
   const list = (title, items) => items.length ? h("div", {}, h("b", {}, title), h("ul", {}, items.map(x => h("li", {}, x)))) : null;
   const acts = (r.actions || []).map(a => [
-    h("b", {}, a.name), " ", h("span", { class: "from-to" }, `${Math.round(a.from * 100)}% → ${Math.round(a.to * 100)}%`),
+    h("b", {}, a.name), " ",
+    h("span", { class: "from-to" }, a.to == null ? "비중 그대로" : `${Math.round(a.from * 100)}% → ${Math.round(a.to * 100)}%`),
+    a.plan && planLine(a.plan, m.currency) ? ` · ${planLine(a.plan, m.currency)}` : "",
     a.stop_pct ? ` · 손절 ${Math.round(a.stop_pct * 100)}%` : "", a.take_pct ? ` · 목표 +${Math.round(a.take_pct * 100)}%` : "",
     a.reason ? ` — ${a.reason}` : "",
   ]);
   const fills = (r.fills || []).map(x => `${side(x)} ${x.shares.toLocaleString("ko-KR")}주 @ ${price(x.price, m.currency)}`);
+  const alerts = r.alerts == null ? [] : r.alerts.length ? r.alerts.map(a => alertLine(a, m.currency)) : ["걸어둔 알림을 모두 지움"];
+  const pace = r.next_check_min ? [`${r.next_check_min}분 뒤에 다시 보기로 함`] : [];
   return h("details", { "data-k": `feed-${m.key}-${f.t}` },
     h("summary", {}, summary),
     h("div", { class: "fbody" },
@@ -775,6 +816,8 @@ function reactionDetails(f, m) {
       r.assessment ? h("p", {}, r.assessment) : null,
       list("바꾼 것", acts),
       list("체결", fills),
+      list("새로 건 알림", alerts),
+      list("다음 점검", pace),
       list("건너뛴 것", r.notes || []),
       r.cash_reason ? h("p", {}, r.cash_reason) : null,
       h("p", { class: "meta" }, [r.model && `모델 ${r.model}`, r.seconds && `${r.seconds}초 걸림`].filter(Boolean).join(" · "))));
@@ -807,10 +850,16 @@ function liveCards(m) {
   const toggle = hidden > 0 || FEED.all
     ? h("button", { class: "linkbtn", type: "button", onclick: () => { FEED.all = !FEED.all; render(); } }, FEED.all ? "중요한 것만 보기" : `뉴스·심사 등 ${hidden}건 더 보기`)
     : null;
+  const watching = (m.alerts || []).length || m.next_check_at
+    ? h("div", { class: "fbody" },
+        (m.alerts || []).length ? h("div", {}, h("b", {}, "AI가 걸어둔 알림"), h("ul", {}, m.alerts.map(a => h("li", {}, alertLine(a, m.currency))))) : null,
+        m.next_check_at ? h("p", { class: "meta" }, `아무 일 없으면 ${localTime(m.next_check_at, m.tz).slice(0, 5)}에 다시 점검해요`) : null)
+    : null;
   const feedCard = h("section", { class: "card" },
     h("div", { class: "card-head" },
       h("h2", {}, "지금 벌어지는 일"),
-      h("p", { class: "sub" }, `시세는 ${DATA.rules.poll_seconds}초, 뉴스는 ${DATA.rules.news_seconds}초마다 확인해요. 급변이나 새 소식이 있을 때만 AI를 깨워요.`)),
+      h("p", { class: "sub" }, `시세는 ${DATA.rules.poll_seconds}초, 뉴스는 ${DATA.rules.news_seconds}초마다 확인해요. 급변, 새 소식, AI가 걸어둔 알림이 울릴 때 AI를 깨워요.`)),
+    watching,
     shown.length
       ? h("ul", { class: "feed" }, shown.map(f => feedItem(f, m)))
       : h("div", { class: "empty" }, h("strong", {}, "아직 큰 일은 없었어요"), h("span", {}, "급변, 손절, AI 판단 같은 일이 생기면 여기에 쌓여요.")),

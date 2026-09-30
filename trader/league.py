@@ -8,8 +8,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import brain, broker, data, features
+from . import plans as planlib
 from .config import (
-    DEFAULT_STOP_PCT,
     MARKETS,
     MONKEY_EVERY,
     MONKEY_PICKS,
@@ -43,6 +43,7 @@ def new_state(market):
         "names": {},
         "journal": [],
         "plans": {},
+        "alerts": [],
         "reactions": [],
         "live": None,
         "updated_at": None,
@@ -53,6 +54,7 @@ def load_state(market):
     path = STATE_DIR / f"{market}.json"
     st = json.loads(path.read_text(encoding="utf-8")) if path.exists() else new_state(market)
     st.setdefault("plans", {})
+    st.setdefault("alerts", [])
     st.setdefault("reactions", [])
     return st
 
@@ -61,20 +63,22 @@ def save_state(market, st):
     atomic_write(STATE_DIR / f"{market}.json", json.dumps(st, ensure_ascii=False, indent=1))
 
 
-def sync_plans(st, new_plans=None):
-    """AI 보유 종목의 손절·목표 계획을 맞춘다. 판 종목은 지우고, 계획이 없는 종목엔 기본 손절을 건다."""
+def sync_plans(st, updates=None, prices=None):
+    """AI 보유 종목의 계획을 맞춘다. 판 종목은 지우고, AI의 새 지시(updates)를 반영하고,
+    손절도 트레일링도 없는 종목엔 기본 손절을 건다. 받아들이지 않은 지시에 대한 메모를 돌려준다."""
     held = st["players"]["ai"]["positions"]
     plans = st.setdefault("plans", {})
+    notes = []
     for code in [c for c in plans if c not in held]:
         del plans[code]
-    for code in held:
-        p = (new_plans or {}).get(code)
-        if p:
-            plans[code] = {"stop_pct": p.get("stop_pct") or DEFAULT_STOP_PCT, "take_pct": p.get("take_pct")}
-            if not p.get("stop_pct"):
-                plans[code]["default"] = True
-        elif code not in plans:
-            plans[code] = {"stop_pct": DEFAULT_STOP_PCT, "take_pct": None, "default": True}
+    for code, pos in held.items():
+        plan = planlib.migrate(plans.get(code), pos["avg"])
+        update = (updates or {}).get(code)
+        if update:
+            plan, skipped = planlib.apply(plan, update, pos["avg"], (prices or {}).get(code))
+            notes += [f"{pos['name']}: {n}" for n in skipped]
+        plans[code] = planlib.ensure_default(plan, pos["avg"])
+    return notes
 
 
 def _hm(s):
@@ -242,8 +246,7 @@ def _decide(st, market, asof, now, sessions, get_bars, log):
                     "name": st["names"].get(c, c),
                     "weight": w,
                     "reason": decided["reasons"].get(c, ""),
-                    "stop_pct": (ai_plans.get(c) or {}).get("stop_pct"),
-                    "take_pct": (ai_plans.get(c) or {}).get("take_pct"),
+                    "plan": ai_plans.get(c) or None,
                 }
                 for c, w in sorted(ai_targets.items(), key=lambda kv: -kv[1])
             ],
@@ -292,12 +295,14 @@ def _context(st, market, asof, by_code):
         for c, pos in ai["positions"].items()
     }
     eq = broker.equity(ai, prices)
+    fmt = lambda x: brain.fmt_price(x, market)
     holdings = [
         {
             "code": c,
             "name": pos["name"],
             "weight": pos["shares"] * prices[c] / eq,
             "pnl": prices[c] / pos["avg"] - 1,
+            "plan": planlib.describe(planlib.migrate(st["plans"].get(c), pos["avg"]), fmt) if st["plans"].get(c) else None,
         }
         for c, pos in ai["positions"].items()
     ]

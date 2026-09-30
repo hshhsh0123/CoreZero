@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import league, live
+from . import plans as planlib
 from .config import (
     LIVE,
     MARKETS,
@@ -168,7 +169,8 @@ def _market_view(key, cfg, st, rdir):
     rt = _runtime_view(key, st, rdir)
     snap = _fresher_snapshot((rt or {}).get("snapshot"), st)
     live_state = (st.get("live") or {}).get("players", {})
-    plans = st.get("plans") or {}
+    plans = (snap or {}).get("plans") or st.get("plans") or {}
+    alerts = (snap or {}).get("alerts") if snap and "alerts" in snap else st.get("alerts") or []
     players = []
     for pkey, label in PLAYERS.items():
         pl = st["players"][pkey]
@@ -196,12 +198,14 @@ def _market_view(key, cfg, st, rdir):
                 "weight": value / eq if eq else 0,
                 "pnl": price / pos["avg"] - 1 if pos["avg"] else 0,
             }
-            plan = plans.get(code) if pkey == "ai" else None
+            plan = planlib.migrate(plans.get(code), pos["avg"]) if pkey == "ai" and plans.get(code) else None
             if plan:
-                if plan.get("stop_pct"):
-                    item["stop"] = pos["avg"] * (1 - plan["stop_pct"])
-                if plan.get("take_pct"):
-                    item["take"] = pos["avg"] * (1 + plan["take_pct"])
+                item["stop"] = plan.get("stop")
+                item["trail_stop"] = planlib.trail_stop(plan)
+                item["trail_pct"] = plan.get("trail_pct")
+                item["high"] = plan.get("high")
+                item["take"] = plan.get("take")
+                item["take_frac"] = plan.get("take_frac") or (1.0 if plan.get("take") else None)
                 item["plan_default"] = bool(plan.get("default"))
             positions.append(item)
         positions.sort(key=lambda p: -p["value"])
@@ -257,6 +261,8 @@ def _market_view(key, cfg, st, rdir):
             "who": [PLAYERS[k] for k, v in pending["targets"].items() if v is not None],
         },
         "players": players,
+        "alerts": [{**a, "name": st.get("names", {}).get(a.get("code"), a.get("code"))} for a in alerts if isinstance(a, dict)],
+        "next_check_at": (snap or {}).get("next_check_at"),
         "journal": list(reversed(st.get("journal", [])))[:30],
         "rt": rt,
     }

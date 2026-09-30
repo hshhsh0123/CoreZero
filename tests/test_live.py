@@ -7,12 +7,14 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from trader import broker, league, live, quotes, triggers
-from trader.config import LIVE, MARKETS, MAX_POSITIONS, MAX_WEIGHT, SLIPPAGE
+from trader import brain, broker, league, live, quotes, triggers
+from trader import plans as planlib
+from trader.config import DEFAULT_STOP_PCT, LIVE, MARKETS, MAX_ALERTS, MAX_POSITIONS, MAX_WEIGHT, SLIPPAGE
 
 KR = MARKETS["kr"]
 T0 = datetime(2026, 9, 30, 1, 0, tzinfo=timezone.utc)  # 한국 10:00 (수요일)
 CAP = KR["capital"]
+BUY_AVG = 100.0 * (1 + SLIPPAGE["kr"]) * (1 + KR["fee"])  # 100원에 샀을 때 평단 (미끄러짐+수수료)
 
 
 def bars_for(n=40):
@@ -48,8 +50,12 @@ class Market:
 
 
 class FakeBrain:
-    def __init__(self, verdict="review", actions=None, boom=False):
-        self.verdict, self.actions, self.boom = verdict, actions or [], boom
+    """react의 답은 reply(고정 dict) 또는 respond(ctx, events) 함수로 정한다."""
+
+    def __init__(self, verdict="review", actions=None, boom=False, reply=None, respond=None):
+        self.verdict, self.boom = verdict, boom
+        self.reply = {"actions": actions or [], **(reply or {})}
+        self.respond = respond
         self.triage_calls, self.react_calls = [], []
 
     def triage(self, ctx, events):
@@ -60,11 +66,15 @@ class FakeBrain:
         self.react_calls.append((ctx, events))
         if self.boom:
             raise RuntimeError("deepseek down")
-        return {"assessment": "판단", "actions": self.actions, "watch": [], "cash_reason": "", "meta": {"model": "fake"}}
+        out = {"assessment": "판단", "actions": [], "alerts": None, "alert_notes": [], "next_check_min": None,
+               "cash_reason": "", "meta": {"model": "fake"}}
+        out.update(self.respond(ctx, events) if self.respond else self.reply)
+        return out
 
 
-def act(code, weight, stop=None, take=None, reason="이유"):
-    return {"code": code, "weight": weight, "reason": reason, "stop_pct": stop, "take_pct": take}
+def act(code, weight, reason="이유", **plan):
+    """brain.clean_actions를 거친 모양 그대로."""
+    return {"code": code, "weight": weight, "reason": reason, "plan": planlib.parse_update(plan)}
 
 
 class EngineCase(unittest.TestCase):
@@ -75,6 +85,7 @@ class EngineCase(unittest.TestCase):
             mock.patch.object(league, "STATE_DIR", tmp / "state"),
             mock.patch.object(league, "LOG_DIR", tmp / "logs"),
             mock.patch.object(live, "RUNTIME", tmp / "runtime"),
+            mock.patch.dict(LIVE, {"open_review": False}),  # 장 시작 점검은 따로 테스트한다
         ]
         for p in self.patches:
             p.start()
@@ -88,7 +99,7 @@ class EngineCase(unittest.TestCase):
             p.stop()
         self.tmp.cleanup()
 
-    def seed(self, positions=None, plans=None, shortlist=("S2",), pending=None):
+    def seed(self, positions=None, plans=None, shortlist=("S2",), pending=None, alerts=None):
         st = league.new_state("kr")
         st.update(started="2026-09-29", last_decided="2026-09-29", decisions=1, pending=pending)
         for pl in st["players"].values():
@@ -99,6 +110,7 @@ class EngineCase(unittest.TestCase):
             ai["cash"] -= shares * avg
             st["names"][code] = f"종목{code}"
         st["plans"] = plans or {}
+        st["alerts"] = alerts or []
         st["journal"] = [{"date": "2026-09-29", "targets": [],
                           "shortlist": [{"code": c, "name": f"종목{c}", "why": "눈여겨봄"} for c in shortlist]}]
         league.save_state("kr", st)
@@ -120,6 +132,15 @@ class EngineCase(unittest.TestCase):
         for _ in range(n):
             eng.tick(self.market.now)
             self.market.now += timedelta(seconds=step)
+
+    def open_and_check_now(self, eng):
+        """장을 열고(첫 확인), 다음 확인 때 바로 정기 점검이 돌게 한다."""
+        self.run_ticks(eng, 1)
+        eng.next_check_at = self.market.now
+
+    @staticmethod
+    def kinds(call):
+        return [e["kind"] for e in call[1]]
 
 
 class PhaseTest(EngineCase):
@@ -147,14 +168,14 @@ class PhaseTest(EngineCase):
 class DetectionTest(EngineCase):
     def test_fast_drop_wakes_ai_and_sells_at_live_price(self):
         self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop_pct": 0.10, "take_pct": None}})
-        brain = FakeBrain(actions=[act("S1", 0.0, reason="악재라 정리")])
-        eng = self.engine(brain)
+        brain_ = FakeBrain(actions=[act("S1", 0.0, reason="악재라 정리")])
+        eng = self.engine(brain_)
         self.run_ticks(eng, 20)                       # 20분 동안 잠잠
-        self.assertEqual(brain.react_calls, [])
+        self.assertEqual(brain_.react_calls, [])
         self.market.prices["S1"] = 96.0               # 갑자기 -4%
         self.run_ticks(eng, 2)
-        self.assertEqual(len(brain.react_calls), 1)
-        kinds = {e["kind"] for e in brain.react_calls[0][1]}
+        self.assertEqual(len(brain_.react_calls), 1)
+        kinds = {e["kind"] for e in brain_.react_calls[0][1]}
         self.assertIn("fast_move", kinds)
         ai = eng.st["players"]["ai"]
         self.assertNotIn("S1", ai["positions"])
@@ -177,74 +198,76 @@ class DetectionTest(EngineCase):
         self.run_ticks(eng, 3)
         self.assertEqual(len([e for e in eng.feed if e["kind"] == "fast_move"]), first)
 
-    def test_quiet_market_makes_no_ai_calls_until_heartbeat(self):
+    def test_quiet_market_makes_no_ai_calls_until_next_check(self):
         self.seed({"S1": (100_000, 100.0)})
-        brain = FakeBrain()
-        eng = self.engine(brain)
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
         self.run_ticks(eng, 60)
-        self.assertEqual(brain.react_calls, [])
-        self.run_ticks(eng, 40)                       # 90분 넘김
-        self.assertEqual(len(brain.react_calls), 1)
-        self.assertEqual(brain.react_calls[0][1][0]["kind"], "heartbeat")
+        self.assertEqual(brain_.react_calls, [])
+        self.run_ticks(eng, 40)                       # 기본 간격(90분) 넘김
+        self.assertEqual(len(brain_.react_calls), 1)
+        self.assertEqual(brain_.react_calls[0][1][0]["kind"], "heartbeat")
         self.run_ticks(eng, 5)
-        self.assertEqual(len(brain.react_calls), 1)
+        self.assertEqual(len(brain_.react_calls), 1)
 
     def test_news_is_triaged_first(self):
         self.seed({"S1": (100_000, 100.0)})
-        brain = FakeBrain(verdict="ignore")
-        eng = self.engine(brain)
+        brain_ = FakeBrain(verdict="ignore")
+        eng = self.engine(brain_)
         when = T0 - timedelta(minutes=2)
         self.news_items = [{"code": "S1", "key": "a:1", "when": when, "title": "무난한 소식", "source": "연합"}]
         self.run_ticks(eng, 3)
-        self.assertEqual(len(brain.triage_calls), 1)
-        self.assertEqual(brain.react_calls, [])
+        self.assertEqual(len(brain_.triage_calls), 1)
+        self.assertEqual(brain_.react_calls, [])
         self.assertEqual(eng.counts["triages"], 1)
-        # 같은 기사는 다시 안 물어본다
-        self.run_ticks(eng, 5, step=130)
-        self.assertEqual(len(brain.triage_calls), 1)
+        self.run_ticks(eng, 5, step=130)             # 같은 기사는 다시 안 물어본다
+        self.assertEqual(len(brain_.triage_calls), 1)
 
-        brain.verdict = "review"
+        brain_.verdict = "review"
         self.news_items.append({"code": "S1", "key": "a:2", "when": self.market.now - timedelta(minutes=1),
                                 "title": "계약 해지", "source": "한경"})
         self.run_ticks(eng, 3, step=130)
-        self.assertEqual(len(brain.triage_calls), 2)
-        self.assertEqual(len(brain.react_calls), 1)
+        self.assertEqual(len(brain_.triage_calls), 2)
+        self.assertEqual(len(brain_.react_calls), 1)
 
     def test_old_news_is_ignored_on_startup(self):
         self.seed({"S1": (100_000, 100.0)})
-        brain = FakeBrain()
-        eng = self.engine(brain)
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
         self.news_items = [{"code": "S1", "key": "old:1", "when": T0 - timedelta(hours=3), "title": "옛 기사", "source": "x"}]
         self.run_ticks(eng, 3)
-        self.assertEqual((brain.triage_calls, brain.react_calls), ([], []))
+        self.assertEqual((brain_.triage_calls, brain_.react_calls), ([], []))
 
-    def test_ai_failure_does_not_crash_or_loop(self):
+    def test_ai_failure_retries_important_events_once(self):
         self.seed({"S1": (100_000, 100.0)})
-        brain = FakeBrain(boom=True)
-        eng = self.engine(brain)
+        brain_ = FakeBrain(boom=True)
+        eng = self.engine(brain_)
         self.run_ticks(eng, 20)
         self.market.prices["S1"] = 96.0
-        self.run_ticks(eng, 6)
-        self.assertEqual(len(brain.react_calls), 1)
+        self.run_ticks(eng, 15)
+        self.assertEqual(len(brain_.react_calls), 2)    # 처음 한 번 + 다시 한 번, 그 뒤로 폭주 없음
         self.assertTrue(any(e["kind"] == "error" for e in eng.feed))
         self.assertIn("S1", eng.st["players"]["ai"]["positions"])
 
 
 class StopTest(EngineCase):
-    def test_stop_needs_two_ticks_then_sells_without_ai(self):
+    def test_stop_needs_two_ticks_then_sells_without_ai_and_asks_ai_after(self):
         self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop_pct": 0.08, "take_pct": None}})
-        brain = FakeBrain()
-        eng = self.engine(brain)
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
         self.run_ticks(eng, 3)
         self.market.prices["S1"] = 91.0
         self.run_ticks(eng, 1)
         self.assertIn("S1", eng.st["players"]["ai"]["positions"])   # 한 번만으로는 안 판다
         self.run_ticks(eng, 1)
         ai = eng.st["players"]["ai"]
-        self.assertNotIn("S1", ai["positions"])
+        self.assertNotIn("S1", ai["positions"])                    # AI 답을 안 기다리고 바로 판다
         self.assertEqual(ai["trades"][-1]["tag"], "stop")
         self.assertNotIn("S1", eng.st["plans"])
-        self.assertEqual(brain.react_calls, [])                      # AI 호출 없이 집행
+        self.assertEqual(len([e for e in eng.feed if e["kind"] == "stop"]), 1)   # 피드에 한 번만
+        self.run_ticks(eng, 6)
+        # 판 뒤에는 AI가 남은 돈을 어떻게 할지 다시 본다
+        self.assertTrue(any("stop" in self.kinds(c) for c in brain_.react_calls))
 
     def test_recovery_resets_confirmation(self):
         self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop_pct": 0.08, "take_pct": None}})
@@ -255,13 +278,56 @@ class StopTest(EngineCase):
             self.run_ticks(eng, 1)
         self.assertIn("S1", eng.st["players"]["ai"]["positions"])
 
-    def test_take_profit(self):
+    def test_take_profit_all(self):
         self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop_pct": 0.08, "take_pct": 0.10}})
         eng = self.engine()
         self.run_ticks(eng, 3)
         self.market.prices["S1"] = 112.0
         self.run_ticks(eng, 2)
         self.assertEqual(eng.st["players"]["ai"]["trades"][-1]["tag"], "take")
+        self.assertNotIn("S1", eng.st["players"]["ai"]["positions"])
+
+    def test_partial_take_sells_part_and_asks_ai_to_replan(self):
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop": 90.0, "take": 110.0, "take_frac": 0.5}})
+
+        def respond(ctx, events):
+            if any(e["kind"] == "take" for e in events):  # 절반 판 뒤: 손절을 본전으로, 트레일링 켜기
+                return {"actions": [act("S1", None, stop_price=100.0, trail_pct=0.05, reason="본전 지키기")]}
+            return {}
+
+        brain_ = FakeBrain(respond=respond)
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 3)
+        self.market.prices["S1"] = 111.0
+        self.run_ticks(eng, 2)
+        ai = eng.st["players"]["ai"]
+        self.assertEqual(ai["positions"]["S1"]["shares"], 50_000)
+        self.assertEqual((ai["trades"][-1]["tag"], ai["trades"][-1]["shares"]), ("take", 50_000))
+        self.assertNotIn("take", eng.st["plans"]["S1"])   # 다음 목표는 AI가 다시 정하게 비운다
+        self.run_ticks(eng, 6)
+        self.assertTrue(any("take" in self.kinds(c) for c in brain_.react_calls))
+        plan = eng.st["plans"]["S1"]
+        self.assertEqual(plan["stop"], 100.0)
+        self.assertEqual((plan["trail_pct"], plan["high"]), (0.05, 111.0))
+        self.assertEqual(ai["positions"]["S1"]["shares"], 50_000)   # 111 > 105.45라 안 팔린다
+
+    def test_trailing_stop_follows_the_high(self):
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"trail_pct": 0.05, "high": 100.0}})
+        eng = self.engine()
+        self.run_ticks(eng, 2)
+        self.assertNotIn("default", eng.st["plans"]["S1"])   # 트레일링만 있어도 기본 손절은 안 건다
+        for p in (104.0, 110.0, 120.0):
+            self.market.prices["S1"] = p
+            self.run_ticks(eng, 1)
+        self.assertEqual(league.load_state("kr")["plans"]["S1"]["high"], 120.0)   # 저장도 된다
+        self.market.prices["S1"] = 115.0                 # 120의 -5%(114)보다 위: 안 판다
+        self.run_ticks(eng, 3)
+        self.assertIn("S1", eng.st["players"]["ai"]["positions"])
+        self.market.prices["S1"] = 113.5
+        self.run_ticks(eng, 2)
+        ai = eng.st["players"]["ai"]
+        self.assertNotIn("S1", ai["positions"])
+        self.assertEqual(ai["trades"][-1]["tag"], "trail")
 
     def test_halted_stock_is_not_traded(self):
         self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop_pct": 0.08, "take_pct": None}})
@@ -280,9 +346,10 @@ class ExecuteTest(EngineCase):
         self.run_ticks(eng, 2)
         return eng
 
-    def result(self, actions, ref=None):
+    def result(self, actions, ref=None, **extra):
         ref = ref or {"S1": 100.0, "S2": 100.0, "S3": 100.0}
-        return {"events": [{"text": "테스트"}], "actions": actions, "ref_prices": ref, "assessment": "a", "seconds": 1.0}
+        return {"events": [{"text": "테스트"}], "actions": actions, "ref_prices": ref, "assessment": "a",
+                "seconds": 1.0, **extra}
 
     def go(self, eng, res):
         eng._execute_react(res, eng.last_q, self.market.now, self.market.now.astimezone(eng.tz))
@@ -292,7 +359,7 @@ class ExecuteTest(EngineCase):
         self.market.prices["S2"] = 103.0            # AI가 본 100보다 3% 올랐다
         self.market.halted.add("S3")
         eng.last_q = self.market.quotes()
-        self.go(eng, self.result([act("S2", 0.2, stop=0.07), act("S3", 0.1, stop=0.07)]))
+        self.go(eng, self.result([act("S2", 0.2, stop_pct=0.07), act("S3", 0.1, stop_pct=0.07)]))
         self.assertNotIn("S2", eng.st["players"]["ai"]["positions"])
         self.assertNotIn("S3", eng.st["players"]["ai"]["positions"])
         notes = eng.st["reactions"][-1]["notes"]
@@ -300,17 +367,53 @@ class ExecuteTest(EngineCase):
 
     def test_buy_sets_plan_and_default_stop(self):
         eng = self.prepared()
-        self.go(eng, self.result([act("S2", 0.2, stop=0.07, take=0.15), act("S3", 0.1)]))
+        self.go(eng, self.result([act("S2", 0.2, stop_pct=0.07, take_pct=0.15, take_frac=0.5), act("S3", 0.1)]))
         plans = eng.st["plans"]
-        self.assertEqual((plans["S2"]["stop_pct"], plans["S2"]["take_pct"]), (0.07, 0.15))
-        self.assertEqual(plans["S3"]["stop_pct"], 0.10)            # 안 정하면 기본 손절
+        self.assertAlmostEqual(plans["S2"]["stop"], BUY_AVG * 0.93)
+        self.assertAlmostEqual(plans["S2"]["take"], BUY_AVG * 1.15)
+        self.assertEqual(plans["S2"]["take_frac"], 0.5)
+        self.assertTrue(plans["S3"]["default"])                     # 안 정하면 기본 손절
+        self.assertAlmostEqual(plans["S3"]["stop"], BUY_AVG * (1 - DEFAULT_STOP_PCT))
         self.assertIn("S1", plans)
+
+    def test_split_buy_moves_default_stop_but_keeps_ai_stop(self):
+        eng = self.prepared({"S1": (50_000, 100.0), "S4": (50_000, 100.0)})
+        league.sync_plans(eng.st, {"S4": {"stop_price": 93.0}})
+        self.market.prices.update(S1=90.0, S4=90.0)
+        eng.last_q = self.market.quotes()
+        # 떨어진 김에 둘 다 비중을 늘린다 (분할 매수)
+        self.go(eng, self.result([act("S1", 0.1), act("S4", 0.1)], ref={"S1": 90.0, "S4": 90.0}))
+        ai = eng.st["players"]["ai"]
+        self.assertLess(ai["positions"]["S1"]["avg"], 100.0)
+        plans = eng.st["plans"]
+        self.assertAlmostEqual(plans["S1"]["stop"], ai["positions"]["S1"]["avg"] * (1 - DEFAULT_STOP_PCT))
+        self.assertEqual(plans["S4"]["stop"], 93.0)                  # AI가 정한 손절가는 그대로
+
+    def test_plan_only_update_does_not_trade(self):
+        eng = self.prepared()
+        before = len(eng.st["players"]["ai"]["trades"])
+        self.go(eng, self.result([act("S1", None, stop_price=97.0, take_price=120.0, take_frac=0.3)]))
+        self.assertEqual(len(eng.st["players"]["ai"]["trades"]), before)
+        plan = eng.st["plans"]["S1"]
+        self.assertEqual((plan["stop"], plan["take"], plan["take_frac"]), (97.0, 120.0, 0.3))
+        self.assertNotIn("default", plan)
+        rec = eng.st["reactions"][-1]
+        self.assertIsNone(rec["actions"][0]["to"])
+        self.assertIn("계획만", [e for e in eng.feed if e["kind"] == "react"][-1]["text"])
+
+    def test_bad_plan_values_are_refused_with_a_note(self):
+        eng = self.prepared()
+        self.go(eng, self.result([act("S1", None, stop_price=150.0), act("S2", None, stop_price=90.0)]))
+        notes = eng.st["reactions"][-1]["notes"]
+        self.assertTrue(any("지금 가격" in n for n in notes))       # 지금 가격보다 높은 손절
+        self.assertTrue(any("들고 있지 않은" in n for n in notes))  # 안 가진 종목의 계획만 변경
+        self.assertTrue(eng.st["plans"]["S1"]["default"])
 
     def test_never_exceeds_cash_or_limits(self):
         codes = [f"S{i}" for i in range(1, 15)]
         self.market = Market(codes)
         eng = self.prepared({"S1": (250_000, 100.0)})               # 이미 25% 보유
-        actions = [act(c, 0.30, stop=0.07) for c in codes[1:]]
+        actions = [act(c, 0.30, stop_pct=0.07) for c in codes[1:]]
         self.go(eng, self.result(actions, ref={c: 100.0 for c in codes}))
         ai = eng.st["players"]["ai"]
         self.assertGreaterEqual(ai["cash"], 0)
@@ -322,22 +425,106 @@ class ExecuteTest(EngineCase):
     def test_untouched_holdings_are_left_alone(self):
         eng = self.prepared({"S1": (50_000, 100.0), "S4": (30_000, 100.0)})
         before = dict(eng.st["players"]["ai"]["positions"]["S4"])
-        self.go(eng, self.result([act("S2", 0.1, stop=0.07)], ref={"S2": 100.0}))
+        plan_before = dict(eng.st["plans"]["S4"])
+        self.go(eng, self.result([act("S2", 0.1, stop_pct=0.07)], ref={"S2": 100.0}))
         self.assertEqual(eng.st["players"]["ai"]["positions"]["S4"], before)
+        self.assertEqual(eng.st["plans"]["S4"], plan_before)
 
     def test_daily_trade_limit_blocks_new_buys_only(self):
         eng = self.prepared()
         eng.counts["trades"] = LIVE["max_live_trades_per_day"]
-        self.go(eng, self.result([act("S2", 0.2, stop=0.07), act("S1", 0.0)]))
+        self.go(eng, self.result([act("S2", 0.2, stop_pct=0.07), act("S1", 0.0)]))
         ai = eng.st["players"]["ai"]
         self.assertNotIn("S2", ai["positions"])
         self.assertNotIn("S1", ai["positions"])                     # 팔기는 허용
 
 
+class AlertAndPacingTest(EngineCase):
+    def test_alert_wakes_ai_with_its_note_then_disappears(self):
+        self.seed({"S1": (50_000, 100.0)})
+        alerts = [{"code": "S2", "below": 95.0, "above": None, "note": "여기 오면 절반 더 살지 검토"}]
+        calls = []
+
+        def respond(ctx, events):
+            calls.append(events)
+            if len(calls) == 1:
+                return {"alerts": alerts, "next_check_min": 120}
+            return {"actions": [act("S2", 0.05, stop_pct=0.05, reason="알림대로 조금 담기")]}
+
+        brain_ = FakeBrain(respond=respond)
+        eng = self.engine(brain_)
+        self.open_and_check_now(eng)
+        self.run_ticks(eng, 2)                      # 점검하고, 다음 확인 때 답을 반영
+        self.assertEqual([(a["code"], a["below"], a["note"], a["name"]) for a in eng.st["alerts"]],
+                         [("S2", 95.0, "여기 오면 절반 더 살지 검토", "종목S2")])
+        self.run_ticks(eng, 10)
+        self.assertEqual(len(calls), 1)             # 알림 가격 전에는 조용
+        self.market.prices["S2"] = 94.0
+        self.run_ticks(eng, 1)
+        self.assertEqual(len(calls), 2)
+        ev = calls[1][0]
+        self.assertEqual(ev["kind"], "alert")
+        self.assertIn("절반 더 살지", ev["text"])
+        self.assertEqual(eng.st["alerts"], [])      # 한 번 울리면 사라진다
+        self.run_ticks(eng, 1)                      # 답을 반영: 알림대로 조금 담는다
+        self.assertIn("S2", eng.st["players"]["ai"]["positions"])
+        self.assertAlmostEqual(eng.st["plans"]["S2"]["stop"], eng.st["players"]["ai"]["positions"]["S2"]["avg"] * 0.95)
+
+    def test_alerts_are_kept_when_ai_does_not_mention_them(self):
+        alerts = [{"code": "S2", "below": 95.0, "above": None, "note": ""}]
+        self.seed({"S1": (50_000, 100.0)}, alerts=alerts)
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.open_and_check_now(eng)
+        self.run_ticks(eng, 1)
+        self.assertEqual(len(brain_.react_calls), 1)
+        self.assertEqual(eng.st["alerts"], alerts)
+
+    def test_ai_chooses_when_to_look_again(self):
+        self.seed({"S1": (50_000, 100.0)})
+        brain_ = FakeBrain(reply={"next_check_min": 20})
+        eng = self.engine(brain_)
+        self.open_and_check_now(eng)
+        self.run_ticks(eng, 1)
+        self.assertEqual(len(brain_.react_calls), 1)
+        self.run_ticks(eng, 19)
+        self.assertEqual(len(brain_.react_calls), 1)
+        self.run_ticks(eng, 2)
+        self.assertEqual(len(brain_.react_calls), 2)
+        self.assertEqual(brain_.react_calls[1][1][0]["kind"], "heartbeat")
+
+    def test_budget_is_shown_to_the_ai(self):
+        self.seed({"S1": (50_000, 100.0)})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.open_and_check_now(eng)
+        eng.counts["reviews"] = 5
+        self.run_ticks(eng, 1)
+        self.assertEqual(brain_.react_calls[0][0]["reviews_left"], LIVE["max_reviews_per_day"] - 6)
+
+    def test_open_review_once_after_the_open_fill(self):
+        pend = {"decided_on": "2026-09-29", "targets": {"ai": {"S2": 0.3}, "monkey": None, "hodl": None}}
+        self.seed(pending=pend)
+        state = {"bars": [], "day": 0}
+        today_bar = {"date": "2026-09-30", "open": 100.0, "high": 101, "low": 99, "close": 100.5, "volume": 1e6}
+        brain_ = FakeBrain()
+        with mock.patch.dict(LIVE, {"open_review": True}):
+            eng = self.engine(brain_, bars=lambda codes: {c: bars_for() + state["bars"] for c in codes})
+            self.run_ticks(eng, 3)
+            self.assertEqual(brain_.react_calls, [])         # 시가 체결 전에는 기다린다
+            state["bars"] = [today_bar]
+            self.run_ticks(eng, 3)
+            self.assertEqual(len(brain_.react_calls), 1)
+            self.assertEqual(brain_.react_calls[0][1][0]["kind"], "open")
+            self.assertIn("S2", brain_.react_calls[0][0]["allowed"])
+            self.run_ticks(eng, 30)
+            self.assertEqual(len(brain_.react_calls), 1)     # 하루에 한 번
+
+
 class SessionFlowTest(EngineCase):
-    def test_pending_order_fills_at_open_with_slippage(self):
+    def test_pending_order_fills_at_open_with_slippage_and_full_plan(self):
         pend = {"decided_on": "2026-09-29", "targets": {"ai": {"S2": 0.3}, "monkey": None, "hodl": None},
-                "plans": {"S2": {"stop_pct": 0.07, "take_pct": None}}}
+                "plans": {"S2": planlib.parse_update({"stop_pct": 0.07, "take_pct": 0.2, "take_frac": 0.5, "trail_pct": 0.1})}}
         self.seed(pending=pend)
         today_bar = {"date": "2026-09-30", "open": 100.0, "high": 101, "low": 99, "close": 100.5, "volume": 1e6}
         eng = self.engine(bars=lambda codes: {c: bars_for() + [today_bar] for c in codes})
@@ -346,8 +533,22 @@ class SessionFlowTest(EngineCase):
         self.assertIn("S2", ai["positions"])
         self.assertAlmostEqual(ai["trades"][0]["price"], 100.0 * (1 + SLIPPAGE["kr"]))
         self.assertEqual(ai["trades"][0]["tag"], "open")
-        self.assertEqual(eng.st["plans"]["S2"]["stop_pct"], 0.07)
+        plan = eng.st["plans"]["S2"]
+        self.assertAlmostEqual(plan["stop"], BUY_AVG * 0.93)
+        self.assertAlmostEqual(plan["take"], BUY_AVG * 1.2)
+        self.assertEqual((plan["take_frac"], plan["trail_pct"]), (0.5, 0.1))
         self.assertIsNone(eng.st["pending"])
+
+    def test_old_style_pending_plans_still_work(self):
+        pend = {"decided_on": "2026-09-29", "targets": {"ai": {"S2": 0.3}, "monkey": None, "hodl": None},
+                "plans": {"S2": {"stop_pct": 0.07, "take_pct": None}}}
+        self.seed(pending=pend)
+        today_bar = {"date": "2026-09-30", "open": 100.0, "high": 101, "low": 99, "close": 100.5, "volume": 1e6}
+        eng = self.engine(bars=lambda codes: {c: bars_for() + [today_bar] for c in codes})
+        self.run_ticks(eng, 2)
+        plan = eng.st["plans"]["S2"]
+        self.assertAlmostEqual(plan["stop"], BUY_AVG * 0.93)
+        self.assertNotIn("take", plan)
 
     def test_pending_waits_for_open_bar(self):
         pend = {"decided_on": "2026-09-29", "targets": {"ai": {"S2": 0.3}, "monkey": None, "hodl": None}}
@@ -381,14 +582,76 @@ class SessionFlowTest(EngineCase):
         self.assertEqual(len(calls), n)
 
     def test_snapshot_files_for_dashboard(self):
-        self.seed({"S1": (50_000, 100.0)})
+        self.seed({"S1": (50_000, 100.0)}, alerts=[{"code": "S2", "below": 90.0, "above": None, "note": ""}])
         eng = self.engine()
         self.run_ticks(eng, 3)
-        snap = json.loads((live.RUNTIME / "live_kr.json").read_text())
+        snap = json.loads((live.RUNTIME / "live_kr.json").read_text(encoding="utf-8"))
         self.assertEqual(snap["phase"], "open")
         self.assertEqual(set(snap["players"]), {"ai", "monkey", "hodl"})
-        self.assertTrue((live.RUNTIME / f"intraday_kr_2026-09-30.jsonl").exists())
+        self.assertEqual(snap["alerts"][0]["code"], "S2")
+        self.assertTrue(snap["next_check_at"])
+        self.assertTrue((live.RUNTIME / "intraday_kr_2026-09-30.jsonl").exists())
         self.assertTrue((live.RUNTIME / "feed_kr.jsonl").exists())
+
+
+class PlanUnitTest(unittest.TestCase):
+    def test_parse_update(self):
+        self.assertEqual(planlib.parse_update({"stop_pct": 7, "take_pct": "0.2"}), {"stop_pct": 0.07, "take_pct": 0.2})
+        self.assertEqual(planlib.parse_update({"trail_pct": 0, "take_price": 0}), {"trail_pct": 0.0, "take_price": 0.0})
+        self.assertEqual(planlib.parse_update({"stop_price": "손절가", "take_frac": 0, "x": 1}), {})
+        self.assertEqual(planlib.parse_update({"stop_pct": 0.9})["stop_pct"], 0.30)   # 범위로 끌어온다
+        self.assertEqual(planlib.parse_update({}), {})
+
+    def test_apply_and_turn_off(self):
+        plan, notes = planlib.apply({}, {"stop_pct": 0.1, "take_price": 130, "take_frac": 0.5, "trail_pct": 0.08}, avg=100, price=110)
+        self.assertEqual((plan["stop"], plan["take"], plan["take_frac"], plan["trail_pct"], plan["high"]), (90, 130, 0.5, 0.08, 110))
+        self.assertEqual(notes, [])
+        plan, _ = planlib.apply(plan, {"take_price": 0.0, "trail_pct": 0.0}, avg=100, price=110)
+        self.assertNotIn("take", plan)
+        self.assertNotIn("take_frac", plan)
+        self.assertNotIn("trail_pct", plan)
+        _, notes = planlib.apply(plan, {"stop_price": 111, "take_price": 105}, avg=100, price=110)
+        self.assertEqual(len(notes), 2)
+
+    def test_check_picks_the_higher_stop(self):
+        plan = {"stop": 90.0, "trail_pct": 0.05, "high": 120.0}
+        self.assertEqual(planlib.effective_stop(plan), ("trail", 114.0))
+        self.assertEqual(planlib.check(plan, 113.0), ("trail", 114.0))
+        self.assertIsNone(planlib.check(plan, 115.0))
+        self.assertEqual(planlib.check({"stop": 90.0, "take": 110.0}, 110.0), ("take", 110.0))
+
+    def test_migrate_and_default(self):
+        self.assertEqual(planlib.migrate({"stop_pct": 0.1, "take_pct": None, "default": True}, 200), {"stop": 180.0, "default": True})
+        plan = planlib.ensure_default({"stop": 180.0, "default": True}, avg=150)
+        self.assertEqual(plan["stop"], 135.0)          # 기본 손절은 평단을 따라간다
+        self.assertEqual(planlib.ensure_default({"stop": 170.0}, avg=150)["stop"], 170.0)
+        self.assertNotIn("stop", planlib.ensure_default({"trail_pct": 0.1, "high": 150}, avg=150))
+
+
+class BrainParsingTest(unittest.TestCase):
+    def test_clean_actions(self):
+        out = brain.clean_actions([
+            {"code": "A", "target_weight": 20, "reason": "r"},
+            {"code": "B", "stop_price": 90},
+            {"code": "C"},                              # 아무것도 안 바꿈
+            {"code": "D", "target_weight": 0.01},       # 너무 작은 비중
+            {"code": "Z", "target_weight": 0.1},        # 목록에 없는 코드
+            "garbage",
+        ], {"A", "B", "C", "D"})
+        self.assertEqual([(a["code"], a["weight"]) for a in out], [("A", 0.2), ("B", None)])
+        self.assertEqual(out[1]["plan"], {"stop_price": 90.0})
+
+    def test_clean_alerts(self):
+        raw = [
+            {"code": "A", "below": 95, "note": "더 살지"},
+            {"code": "A", "above": 99},                 # 이미 지금 가격(100) 위: 바로 울리니 뺀다
+            {"code": "Q", "below": 1},                  # 목록에 없는 종목
+        ] + [{"code": "B", "above": 200 + i} for i in range(20)]
+        alerts, notes = brain.clean_alerts(raw, {"A", "B"}, {"A": 100.0, "B": 100.0})
+        self.assertEqual(alerts[0], {"code": "A", "above": None, "below": 95.0, "note": "더 살지"})
+        self.assertEqual(len(alerts), MAX_ALERTS)
+        self.assertTrue(any("이미" in n for n in notes) and any("Q" in n for n in notes))
+        self.assertEqual(brain.clean_alerts(None, {"A"}, {}), ([], []))
 
 
 class TriggerUnitTest(unittest.TestCase):
