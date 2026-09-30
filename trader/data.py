@@ -152,10 +152,53 @@ def news(market, code, n=5, before=None):
 
 
 def _parse_stamp(stamp):
-    digits = re.sub(r"\D", "", stamp or "")[:12]
+    digits = re.sub(r"\D", "", stamp or "")
     if len(digits) < 12:
         return None
-    return datetime.strptime(digits, "%Y%m%d%H%M").replace(tzinfo=KST)
+    if len(digits) >= 14:
+        return datetime.strptime(digits[:14], "%Y%m%d%H%M%S").replace(tzinfo=KST)
+    return datetime.strptime(digits[:12], "%Y%m%d%H%M").replace(tzinfo=KST)
+
+
+def news_items(market, code, n=8):
+    """기사 목록(최신순). key는 중복 제거용이다. code가 MAIN이면 한국 주요뉴스."""
+    if market == "kr" and code != "MAIN":
+        groups = net.get_json(f"https://m.stock.naver.com/api/news/stock/{code}?pageSize={n}&page=1")
+        raw = [
+            (f"{i.get('officeId')}:{i.get('articleId')}", i.get("datetime", ""), i.get("title", ""), i.get("officeName", ""))
+            for g in groups
+            for i in g.get("items", [])
+        ]
+    else:
+        if market == "kr":
+            url = f"https://m.stock.naver.com/api/news/list?category=mainnews&pageSize={n}&page=1"
+        else:
+            url = f"https://api.stock.naver.com/news/worldStock/{code}?pageSize={n}&page=1"
+        raw = [
+            (f"{i.get('oid')}:{i.get('aid')}", i.get("dt", ""), i.get("tit", ""), i.get("ohnm", ""))
+            for i in net.get_json(url)
+        ]
+    items = [
+        {"code": code, "key": key, "when": _parse_stamp(stamp), "title": html.unescape(title).strip(), "source": source}
+        for key, stamp, title, source in raw
+        if title
+    ]
+    items.sort(key=lambda it: it["when"] or datetime.min.replace(tzinfo=KST), reverse=True)
+    return items
+
+
+def news_many(market, codes, n=8, workers=8):
+    """여러 피드를 병렬로. codes 순서를 유지한다. 실패한 피드는 빠진다."""
+
+    def one(code):
+        try:
+            return news_items(market, code, n)
+        except Exception as e:
+            print(f"  ! {code} 뉴스 실패: {e}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return [it for items in ex.map(one, codes) for it in items]
 
 
 FUNDAMENTAL_KEYS = {

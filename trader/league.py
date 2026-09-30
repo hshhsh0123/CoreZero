@@ -1,23 +1,38 @@
 """리그 하루치 진행: 밀린 주문 체결 → 확정된 날 평가 → 새 결정."""
 
 import json
+import os
 import random
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import brain, broker, data, features
-from .config import MARKETS, MONKEY_EVERY, MONKEY_PICKS, NEWS_PER_STOCK, PLAYERS, SETTLE_MINUTES
+from .config import (
+    DEFAULT_STOP_PCT,
+    MARKETS,
+    MONKEY_EVERY,
+    MONKEY_PICKS,
+    NEWS_PER_STOCK,
+    PLAYERS,
+    SETTLE_MINUTES,
+    SLIPPAGE,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = ROOT / "state"
 LOG_DIR = ROOT / "logs"
 
 
-def load_state(market):
-    path = STATE_DIR / f"{market}.json"
-    if path.exists():
-        return json.loads(path.read_text())
+def atomic_write(path, text):
+    """쓰다 만 파일을 다른 프로세스가 읽지 않게, 임시 파일에 쓰고 바꿔치기한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def new_state(market):
     return {
         "market": market,
         "started": None,
@@ -27,14 +42,39 @@ def load_state(market):
         "players": {p: broker.new_player(MARKETS[market]["capital"]) for p in PLAYERS},
         "names": {},
         "journal": [],
+        "plans": {},
+        "reactions": [],
         "live": None,
         "updated_at": None,
     }
 
 
+def load_state(market):
+    path = STATE_DIR / f"{market}.json"
+    st = json.loads(path.read_text()) if path.exists() else new_state(market)
+    st.setdefault("plans", {})
+    st.setdefault("reactions", [])
+    return st
+
+
 def save_state(market, st):
-    STATE_DIR.mkdir(exist_ok=True)
-    (STATE_DIR / f"{market}.json").write_text(json.dumps(st, ensure_ascii=False, indent=1))
+    atomic_write(STATE_DIR / f"{market}.json", json.dumps(st, ensure_ascii=False, indent=1))
+
+
+def sync_plans(st, new_plans=None):
+    """AI 보유 종목의 손절·목표 계획을 맞춘다. 판 종목은 지우고, 계획이 없는 종목엔 기본 손절을 건다."""
+    held = st["players"]["ai"]["positions"]
+    plans = st.setdefault("plans", {})
+    for code in [c for c in plans if c not in held]:
+        del plans[code]
+    for code in held:
+        p = (new_plans or {}).get(code)
+        if p:
+            plans[code] = {"stop_pct": p.get("stop_pct") or DEFAULT_STOP_PCT, "take_pct": p.get("take_pct")}
+            if not p.get("stop_pct"):
+                plans[code]["default"] = True
+        elif code not in plans:
+            plans[code] = {"stop_pct": DEFAULT_STOP_PCT, "take_pct": None, "default": True}
 
 
 def _hm(s):
@@ -121,8 +161,12 @@ def _fill_pending(st, market, sessions, get_bars, log):
     for name, targets in pending["targets"].items():
         if targets is None:
             continue
-        fills = broker.rebalance(st["players"][name], targets, opens, st["names"], MARKETS[market], day)
+        fills = broker.rebalance(
+            st["players"][name], targets, opens, st["names"], MARKETS[market], day, slippage=SLIPPAGE[market], tag="open"
+        )
         log(f"  {PLAYERS[name]}: {len(fills)}건 체결 ({day} 시가)")
+    if pending["targets"].get("ai") is not None:
+        sync_plans(st, pending.get("plans"))
     st["pending"] = None
 
 
@@ -168,6 +212,7 @@ def _decide(st, market, asof, now, sessions, get_bars, log):
     ctx = _context(st, market, asof, by_code)
     entry = {"date": asof, "decided_at": now.isoformat()}
     log_payload = {"date": asof, "market": market}
+    ai_plans = {}
     try:
         log(f"  AI 1단계: 후보 {len(info)}개 중에서 추리는 중...")
         scouted = brain.scout(ctx, [by_code[c] for c in info if c in by_code])
@@ -186,6 +231,7 @@ def _decide(st, market, asof, now, sessions, get_bars, log):
             details.append(d)
         decided = brain.decide(ctx, details)
         ai_targets = decided["targets"]
+        ai_plans = decided.get("plans") or {}
         entry.update(
             scout_view=scouted["market_view"],
             shortlist=[{**s, "name": st["names"].get(s["code"], s["code"])} for s in scouted["shortlist"]],
@@ -196,6 +242,8 @@ def _decide(st, market, asof, now, sessions, get_bars, log):
                     "name": st["names"].get(c, c),
                     "weight": w,
                     "reason": decided["reasons"].get(c, ""),
+                    "stop_pct": (ai_plans.get(c) or {}).get("stop_pct"),
+                    "take_pct": (ai_plans.get(c) or {}).get("take_pct"),
                 }
                 for c, w in sorted(ai_targets.items(), key=lambda kv: -kv[1])
             ],
@@ -228,6 +276,7 @@ def _decide(st, market, asof, now, sessions, get_bars, log):
     st["pending"] = {
         "decided_on": asof,
         "targets": {"ai": ai_targets, "monkey": monkey_targets, "hodl": hodl_targets},
+        "plans": ai_plans,
     }
     st["last_decided"] = asof
     st["decisions"] += 1

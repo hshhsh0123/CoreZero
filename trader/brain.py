@@ -6,12 +6,17 @@ import re
 
 from . import net
 from .config import (
+    DEFAULT_STOP_PCT,
     MAX_POSITIONS,
     MAX_WEIGHT,
     MIN_WEIGHT,
     MODEL_DECIDE,
+    MODEL_REACT,
     MODEL_SCOUT,
+    MODEL_TRIAGE,
     SHORTLIST_MAX,
+    STOP_RANGE,
+    TAKE_RANGE,
 )
 from .features import pct
 
@@ -126,9 +131,14 @@ def decide(ctx, details):
         "- 위 [후보 상세]에 있는 코드만 쓸 수 있어.",
         "- 주문은 다음 거래일 시가에 체결돼. 계속 들고 갈 종목도 targets에 다시 넣어야 하고, "
         "빠진 보유 종목은 전부 팔아.",
+        f"- 종목마다 손절 비율 stop_pct(평단보다 이만큼 떨어지면 장중에 자동으로 팔아. {STOP_RANGE[0]}~{STOP_RANGE[1]})를 "
+        f"정해. 목표 수익 비율 take_pct({TAKE_RANGE[0]}~{TAKE_RANGE[1]})는 선택이야. "
+        f"stop_pct를 안 정하면 {DEFAULT_STOP_PCT}가 기본으로 걸려.",
+        "- 장중에는 시세와 뉴스를 계속 지켜보다가 큰 일이 생기면 너를 다시 불러서 비중을 고치게 해줄 거야.",
         "",
         '형식: {"market_view": "시장 전체에 대한 한두 문장", '
-        '"targets": [{"code": "종목코드", "weight": 0.2, "reason": "왜 이 종목을 이 비중으로 드는지 한두 문장"}], '
+        '"targets": [{"code": "종목코드", "weight": 0.2, "reason": "왜 이 종목을 이 비중으로 드는지 한두 문장", '
+        '"stop_pct": 0.08, "take_pct": 0.2}], '
         '"cash_reason": "현금 비중을 이렇게 둔 이유 한 줄"}',
     ]
     result, meta = chat_json(MODEL_DECIDE, system_prompt(ctx), "\n".join(lines))
@@ -138,6 +148,7 @@ def decide(ctx, details):
         "market_view": str(result.get("market_view", "")),
         "targets": targets,
         "reasons": reasons,
+        "plans": parse_plans(result.get("targets") or [], set(targets)),
         "cash_reason": str(result.get("cash_reason", "")),
         "meta": meta,
     }
@@ -252,3 +263,180 @@ def fmt_price(x, market):
 
 def fmt_money(x, currency):
     return f"{x:,.0f}원" if currency == "KRW" else f"${x:,.2f}"
+
+
+# ---------------------------------------------------------------- 실시간(장중) 두뇌
+
+
+def _frac(x, lo, hi):
+    """0.07 이든 7 이든 0.07로. 범위 밖이면 끌어다 놓고, 이상한 값이면 None."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    if v > 1:
+        v /= 100
+    if v <= 0:
+        return None
+    return min(max(v, lo), hi)
+
+
+def parse_plans(raw, codes):
+    """AI가 종목별로 적어준 손절·목표 비율. {code: {"stop_pct", "take_pct"}}"""
+    plans = {}
+    for t in raw:
+        code = str(t.get("code", "")).strip()
+        if code not in codes:
+            continue
+        stop = _frac(t.get("stop_pct"), *STOP_RANGE)
+        take = _frac(t.get("take_pct"), *TAKE_RANGE)
+        if stop or take:
+            plans[code] = {"stop_pct": stop, "take_pct": take}
+    return plans
+
+
+def clean_actions(raw, allowed):
+    """장중에 AI가 바꾸겠다는 종목들을 규칙에 맞게 다듬는다. 안 맞으면 그 항목만 버린다."""
+    out, seen = [], set()
+    for a in raw:
+        code = str(a.get("code", "")).strip()
+        if code not in allowed or code in seen:
+            continue
+        try:
+            w = float(a.get("target_weight", a.get("weight", 0)))
+        except (TypeError, ValueError):
+            continue
+        if w > 1.0:
+            w /= 100
+        if w < 0 or (0 < w < MIN_WEIGHT):
+            continue
+        seen.add(code)
+        out.append(
+            {
+                "code": code,
+                "weight": min(w, MAX_WEIGHT),
+                "reason": str(a.get("reason", "")),
+                "stop_pct": _frac(a.get("stop_pct"), *STOP_RANGE),
+                "take_pct": _frac(a.get("take_pct"), *TAKE_RANGE),
+            }
+        )
+    return out
+
+
+def system_prompt_live(ctx):
+    return system_prompt(ctx) + (
+        " 지금은 장이 열려 있고 시세와 뉴스를 실시간으로 지켜보는 중이야. 새 사건이 생겼을 때만 너를 불러. "
+        "대부분의 소식은 가만히 있는 게 정답이니까, 별일 아니면 아무것도 안 바꿔도 돼. "
+        "너무 자주 사고팔면 수수료와 체결 미끄러짐으로 손해야."
+    )
+
+
+def events_text(events):
+    lines = []
+    for e in events:
+        stamp = e.get("at", "")[11:16] if e.get("at") else ""
+        lines.append(f"- [{e.get('local', stamp)}] {e['text']}")
+        for n in (e.get("data") or {}).get("items", [])[:4]:
+            lines.append(f"    · [{n['time']} {n['source']}] {n['title']}")
+    return "\n".join(lines) if lines else "- 없음"
+
+
+def triage(ctx, events):
+    """새 소식만 있을 때 flash가 먼저 거른다. 판단이 필요하면 verdict가 review."""
+    lines = [
+        f"현재 시각 {ctx['now_local']} ({ctx['market_name']} 장중, 마감까지 {ctx['minutes_left']}분)",
+        "",
+        "[내 보유 종목]",
+    ]
+    lines += [
+        f"- {h['name']}({h['code']}): 비중 {h['weight'] * 100:.1f}%, 평단 대비 {pct(h['pnl'])}, 오늘 {pct(h['day'])}"
+        for h in ctx["holdings"]
+    ] or ["- 없음"]
+    lines += [
+        "",
+        "[새로 들어온 소식]",
+        events_text(events),
+        "",
+        "이 소식 때문에 지금 포트폴리오를 바꿔야 할지 판단해. 이미 주가에 반영됐거나 나랑 상관없는 소식이면 ignore야. "
+        "보유 종목에 직접 영향이 있거나, 새로 살 만한 큰 기회일 때만 review.",
+        '형식: {"verdict": "review" 또는 "ignore", "importance": 1부터 5까지 정수, "reason": "한 줄"}',
+    ]
+    result, meta = chat_json(MODEL_TRIAGE, system_prompt_live(ctx), "\n".join(lines), max_tokens=4000)
+    try:
+        importance = int(result.get("importance"))
+    except (TypeError, ValueError):
+        importance = None
+    return {
+        "verdict": "review" if str(result.get("verdict", "")).lower().startswith("review") else "ignore",
+        "importance": importance,
+        "reason": str(result.get("reason", "")),
+        "meta": meta,
+    }
+
+
+def react(ctx, events, triage=None):
+    """장중에 사건을 보고 포트폴리오를 어떻게 바꿀지 정한다."""
+    market = ctx["market"]
+    cur = ctx["currency"]
+    lines = [
+        f"현재 시각 {ctx['now_local']} ({ctx['market_name']} 장중, 마감까지 {ctx['minutes_left']}분)",
+        "",
+        "[지금 벌어진 일]",
+        events_text(events),
+    ]
+    if triage:
+        lines.append(f"(빠른 심사에서 검토가 필요하다고 함: {triage.get('reason', '')})")
+    lines += [
+        "",
+        "[내 포트폴리오]",
+        f"평가금액 {fmt_money(ctx['equity'], cur)}, 현금 {fmt_money(ctx['cash'], cur)} ({ctx['cash'] / ctx['equity'] * 100:.1f}%)",
+    ]
+    for h in ctx["holdings"]:
+        stop = f", 손절가 {fmt_price(h['stop'], market)}" if h.get("stop") else ""
+        take = f", 목표가 {fmt_price(h['take'], market)}" if h.get("take") else ""
+        thesis = f"\n    산 이유: {h['thesis']}" if h.get("thesis") else ""
+        lines.append(
+            f"- {h['name']}({h['code']}): 비중 {h['weight'] * 100:.1f}%, 현재가 {fmt_price(h['price'], market)}, "
+            f"평단 대비 {pct(h['pnl'])}, 오늘 {pct(h['day'])}, 15분 {pct(h['r15'])}, 1시간 {pct(h['r60'])}{stop}{take}{thesis}"
+        )
+    if not ctx["holdings"]:
+        lines.append("- 보유 종목 없음")
+    b = ctx["bench"]
+    lines += [
+        "",
+        f"[시장] {b['name']}: 오늘 {pct(b['day'])}, 15분 {pct(b['r15'])}, 1시간 {pct(b['r60'])}",
+        "[오늘 등락 상위] " + (", ".join(f"{m['name']}({m['code']}) {pct(m['day'])}" for m in ctx["movers_up"]) or "-"),
+        "[오늘 등락 하위] " + (", ".join(f"{m['name']}({m['code']}) {pct(m['day'])}" for m in ctx["movers_down"]) or "-"),
+    ]
+    if ctx["candidates"]:
+        lines.append("[갈아탈 후보: 어제 종가 때 눈여겨본 종목]")
+        for c in ctx["candidates"]:
+            lines.append(f"- {c['name']}({c['code']}): 현재가 {fmt_price(c['price'], market)}, 오늘 {pct(c['day'])}. {c.get('why', '')}")
+    lines += [
+        "",
+        "[리그 현황: 시작 이후 수익률] " + ", ".join(f"{n} {pct(r, 2)}" for n, r in ctx["standings"]),
+        f"[오늘 내 매매] {ctx['trades_today']}건, 수수료·세금 {fmt_money(ctx['fees_today'], cur)}. "
+        f"체결가에는 미끄러짐 {ctx['slippage'] * 100:.2f}%가 불리한 쪽으로 붙어.",
+        "",
+        "[규칙]",
+        "- actions에는 바꾸고 싶은 종목만 넣어. 안 넣은 보유 종목은 그대로 들고 가. 바꿀 게 없으면 \"actions\": [].",
+        "- target_weight는 그 종목의 새 목표 비중(전체 평가금액 대비)이야. 0이면 전량 매도.",
+        f"- 종목당 비중은 {MIN_WEIGHT} 이상 {MAX_WEIGHT} 이하, 최대 {MAX_POSITIONS}종목.",
+        f"- 새로 사거나 비중을 늘릴 때는 stop_pct(평단보다 이만큼 떨어지면 자동으로 팔아. {STOP_RANGE[0]}~{STOP_RANGE[1]})를 "
+        f"꼭 정해. take_pct(목표 수익률)는 선택이야. 안 정하면 손절 {DEFAULT_STOP_PCT}가 기본으로 걸려.",
+        "- 코드는 [내 포트폴리오], [갈아탈 후보], [오늘 등락 상위·하위]에 나온 것만 쓸 수 있어.",
+        "- 이미 손절가가 걸려 있는 종목은 그 가격에 닿으면 자동으로 팔려. 그 전에 네가 먼저 팔 이유가 있을 때만 팔아.",
+        "",
+        '형식: {"assessment": "지금 상황에 대한 판단 두세 문장", '
+        '"actions": [{"code": "종목코드", "target_weight": 0.12, "reason": "왜 이렇게 바꾸는지 한두 문장", '
+        '"stop_pct": 0.07, "take_pct": 0.15}], '
+        '"watch": ["더 지켜볼 종목코드"], "cash_reason": "현금 비중에 대한 한 줄"}',
+    ]
+    result, meta = chat_json(MODEL_REACT, system_prompt_live(ctx), "\n".join(lines))
+    return {
+        "assessment": str(result.get("assessment", "")),
+        "actions": clean_actions(result.get("actions") or [], set(ctx["allowed"])),
+        "watch": [str(c) for c in (result.get("watch") or [])][:6],
+        "cash_reason": str(result.get("cash_reason", "")),
+        "meta": meta,
+    }
