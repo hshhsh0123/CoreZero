@@ -614,7 +614,7 @@ def react(ctx, events, triage=None, mode="trade"):
         "3) 알림 걸기: alerts에 가격을 적으면 그 가격 위로(above) 올라가거나 아래로(below) 내려가면 너를 다시 불러. "
         "note에 그때 하려는 일을 적어두면 같이 보여줄게. 예: 더 떨어지면 나눠서 더 살지 검토. "
         f"알림은 한 번 울리면 사라지고 최대 {MAX_ALERTS}개야. alerts에 알림을 적으면 지금 걸린 알림 전체가 그 목록으로 바뀌어 "
-        "(남길 알림도 같이 적어). 지금 알림을 그대로 두려면 alerts를 빼거나 빈 목록으로 둬. 다 지우려면 \"clear_alerts\": true.",
+        "(남길 알림도 같이 적어). 지금 알림을 그대로 두려면 alerts를 빼거나 빈 목록으로 둬. 알림을 전부 없앨 때만 clear_alerts를 true로 적어 (보통은 적지 마).",
         f"4) 다음 점검: next_check_min({lo}~{hi})에 아무 일이 없어도 다시 볼 시간을 분으로 적어. 불안하면 짧게, 조용하면 길게.",
     ]
     if news:
@@ -663,6 +663,8 @@ def react(ctx, events, triage=None, mode="trade"):
         # 빈 목록(하나도 못 건 목록 포함)은 '새로 걸 알림 없음'으로 자주 쓰여서 지금 알림을 그대로 둔다(None).
         # 다 지우는 건 따로 말해야 한다
         alerts = [] if result.get("clear_alerts") is True else None
+        if alerts == [] and ctx.get("alerts"):
+            alert_notes.append(f"걸려 있던 알림 {len(ctx['alerts'])}개를 AI가 모두 지웠어요")
     nc = planlib._num(result.get("next_check_min"))
     actions, action_notes = clean_actions(result.get("actions") or [], allowed)
     out = {
