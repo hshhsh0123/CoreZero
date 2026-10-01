@@ -815,22 +815,27 @@ class LiveEngine:
             return
         if self.last_job_at and (now - self.last_job_at).total_seconds() < LIVE["job_gap_seconds"]:
             return
-        if not self.events:
+        # 오래된 기사는 버린다 (그 종목이 움직였을 때 같이 보여주려고 잠깐 들고 있던 것)
+        keep = timedelta(minutes=LIVE["news_keep_min"])
+        self.events = [e for e in self.events if e["kind"] != "news" or not _iso(e.get("at")) or now - _iso(e["at"]) <= keep]
+        if not any(e["kind"] != "news" for e in self.events):
             due = self.next_check_at and now >= self.next_check_at
-            if not due or self._minutes_left(local) < 15:
-                return
-            self._add_event(now, local, "heartbeat", "네가 정한 다음 점검 시간이 됐어 (그동안 특별한 일은 없었어)", quiet=True)
+            if due and self._minutes_left(local) >= 15:
+                self._add_event(now, local, "heartbeat", "네가 정한 다음 점검 시간이 됐어 (그동안 특별한 일은 없었어)", quiet=True)
+        if not self.events:
+            return
         if self.counts["reviews"] >= LIVE["max_reviews_per_day"]:
             self.events.clear()
             if not self.budget_noted:
                 self.budget_noted = True
                 self._feed("info", f"오늘 AI 점검 {LIVE['max_reviews_per_day']}번을 다 써서 이후 사건은 넘어가요", now)
             return
-        # 가격·계획에서 생긴 사건이 먼저다. 기사만 있으면 '뉴스 점검'(매매 없음)으로 따로 본다.
+        # 가격·계획에서 생긴 사건이 먼저다. 급하지 않은 가격 사건이 모이는 동안이나 기사만 있을 때는
+        # 기사를 따로 '뉴스 점검'(매매 없음)으로 본다.
         priced = [e for e in self.events if e["kind"] != "news"]
-        if priced:
-            if self.last_react_at and (now - self.last_react_at) < timedelta(minutes=self._review_gap(priced, local)):
-                return
+        ready = bool(priced) and not (
+            self.last_react_at and (now - self.last_react_at) < timedelta(minutes=self._review_gap(priced, local)))
+        if ready:
             mode = "trade"
             codes = {e.get("code") for e in priced if e.get("code")}
             # 확인을 기다리던 뉴스가 있는 종목이 먼저 움직였으면 기다리지 않고 그 뉴스도 같이 보여준다
@@ -841,19 +846,21 @@ class LiveEngine:
             batch = (priced + related)[:12]  # 같은 종목 기사는 주가가 확인해준 뉴스로 같이 보여준다
             self.events = [e for e in self.events if not any(e is b for b in batch)]
         else:
-            if self.counts["triages"] >= LIVE["max_triages_per_day"]:
-                self.events.clear()
+            news = [e for e in self.events if e["kind"] == "news"]
+            if not news:
                 return
+            if self.counts["triages"] >= LIVE["max_triages_per_day"]:
+                return   # 기사는 들고 있다가 그 종목이 움직이면 같이 보여준다
             if self.counts.get("news_reviews", 0) >= LIVE["max_news_reviews_per_day"]:
                 # 뉴스 점검 몫을 다 썼다. 남은 점검은 가격이 움직였을 때 쓴다
-                self.events.clear()
                 if not self.news_budget_noted:
                     self.news_budget_noted = True
                     self._feed("info", f"오늘 뉴스 점검 {LIVE['max_news_reviews_per_day']}번을 다 써서 기사만으로는 더 안 불러요. "
-                                       "주가가 움직이면 그때 같이 봐요", now)
+                                       "그 종목 주가가 움직이면 그때 같이 봐요", now)
                 return
             mode = "news"
-            batch, self.events = self.events[:10], self.events[10:]
+            batch = news[:10]
+            self.events = [e for e in self.events if not any(e is b for b in batch)]
             self.counts["triages"] += 1
         extra = {self._price_code(e["code"]) for e in batch if e.get("code")}
         ctx = self._build_ctx(q, now, local, extra_codes=extra)

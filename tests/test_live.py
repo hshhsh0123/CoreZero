@@ -1117,6 +1117,52 @@ class NewsBudgetTest(EngineCase):
         self.market.prices["S1"] = 95.0                              # 가격 사건은 여전히 AI를 부른다
         self.run_ticks(eng, 20)
         self.assertIn("trade", brain_.modes)
+        trade = brain_.react_calls[brain_.modes.index("trade")][1]
+        self.assertIn("news", [e["kind"] for e in trade])            # 못 본 기사는 그 종목이 움직일 때 같이 본다
+
+    def test_news_is_screened_while_routine_price_events_wait(self):
+        self.seed({"S1": (100_000, 100.0), "S4": (100_000, 100.0)}, plans={"S1": {"stop": 80.0}})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 20)
+        eng.counts["reviews"] = 15                                    # 점검이 빠듯해서 가격 사건은 모아서 본다
+        self.market.prices["S1"] = 96.0
+        self.run_ticks(eng, 1)
+        self.market.prices["S1"] = 93.0
+        self.run_ticks(eng, 2)                                        # 급하지 않은 가격 사건이 기다리는 중
+        self.news_items = [{"code": "S4", "key": "d1", "when": self.market.now - timedelta(minutes=1),
+                            "title": "B사 투자경고종목 지정", "source": "거래소 공시", "official": True}]
+        eng.last_news_at = None
+        self.run_ticks(eng, 3)
+        self.assertEqual(brain_.modes, ["trade", "news"])             # 기사는 기다리지 않고 따로 본다
+        self.assertEqual([e["code"] for e in brain_.react_calls[1][1]], ["S4"])
+        self.assertTrue(any(e["kind"] != "news" for e in eng.events))  # 가격 사건은 그대로 기다린다
+
+    def test_scheduled_check_is_not_blocked_by_waiting_news(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 1)
+        eng.counts["news_reviews"] = LIVE["max_news_reviews_per_day"]
+        self.news_items = [{"code": "S1", "key": "w1", "when": self.market.now - timedelta(minutes=1), "title": "A사 소식", "source": "x"}]
+        eng.last_news_at = None
+        self.run_ticks(eng, 2)                                        # 기사는 몫을 다 써서 기다리는 중
+        eng.next_check_at = self.market.now
+        self.run_ticks(eng, 2)
+        self.assertEqual(self.kinds(brain_.react_calls[0])[0], "heartbeat")   # AI가 정한 점검은 그대로 돈다
+
+    def test_stale_unseen_news_is_dropped(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 1)
+        eng.counts["news_reviews"] = LIVE["max_news_reviews_per_day"]
+        self.news_items = [{"code": "S1", "key": "o1", "when": self.market.now - timedelta(minutes=1), "title": "A사 소식", "source": "x"}]
+        eng.last_news_at = None
+        self.run_ticks(eng, 2)
+        self.assertEqual([e["kind"] for e in eng.events], ["news"])  # 몫을 다 써도 바로 버리지 않는다
+        self.run_ticks(eng, 61)
+        self.assertEqual(eng.events, [])                              # 한 시간이 지나면 버린다
 
     def test_low_importance_news_is_not_escalated(self):
         self.seed({"S1": (100_000, 100.0)})
