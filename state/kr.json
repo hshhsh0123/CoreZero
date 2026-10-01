@@ -668,7 +668,7 @@
    "take": 2027617.2469724999,
    "take_frac": 0.5,
    "trail_pct": 0.08,
-   "high": 1777000.0
+   "high": 1779000.0
   },
   "267260": {
    "stop": 590938.6275,
@@ -1118,6 +1118,27 @@
    "fills": [],
    "notes": [],
    "seconds": 44.8,
+   "model": "deepseek-v4-pro",
+   "triage": null,
+   "recheck": [],
+   "blocked": []
+  },
+  {
+   "time": "2026-10-01T00:45:19.523446+00:00",
+   "date": "2026-10-01",
+   "mode": "trade",
+   "trigger": [
+    "현대모비스 오늘 +4.1% (상승 1단계)",
+    "현대모비스: 현대모비스, 램프사업 6000억원 매각에 5%대 강세 [종목NOW]"
+   ],
+   "assessment": "현대모비스 램프사업 매각 호재로 반등 중이나, 시장 전반 약세와 종목별 혼조로 추가 매매는 자제. 기존 포지션 손익 관리에 집중.",
+   "cash_reason": "현금 17.2%를 유지하며 시장 조정 시 저가 매수 기회를 노림",
+   "actions": [],
+   "alerts": null,
+   "next_check_min": 60,
+   "fills": [],
+   "notes": [],
+   "seconds": 38.0,
    "model": "deepseek-v4-pro",
    "triage": null,
    "recheck": [],
