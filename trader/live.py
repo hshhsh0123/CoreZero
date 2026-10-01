@@ -658,18 +658,23 @@ class LiveEngine:
                         f"{name} 최근 {window}분 {r:+.1%} (평소 그 시간 변동폭의 {times:.1f}배)",
                         code=code, name=name, data={"r": r, "thr": thr},
                     )
-            # 2) 오늘 등락이 새 단계에 들어섰을 때 (한 번만)
+            # 2) 오늘 등락이 새 단계에 들어섰을 때. 단계마다 하루 한 번만 (경계에서 오르내려도 다시 안 깨운다)
             step = max(LIVE["index_day_step"] if is_bench else LIVE["day_step_min"], 1.5 * sigma)
             lvl = triggers.day_level(qq["pct"], step)
-            prev = self.day_levels.get(code, 0)
-            if lvl != 0 and (abs(lvl) > abs(prev) or lvl * prev < 0):
-                self.day_levels[code] = lvl
+            up, down = self._day_marks(code)
+            if lvl > up or lvl < down:
+                self.day_levels[code] = [max(up, lvl), min(down, lvl)]
                 self._add_event(
                     now, local, "day_step", f"{name} 오늘 {qq['pct']:+.1%} ({'상승' if lvl > 0 else '하락'} {abs(lvl)}단계)",
                     code=code, name=name, data={"pct": qq["pct"]},
                 )
-            else:
-                self.day_levels[code] = lvl
+
+    def _day_marks(self, code):
+        """오늘 이 종목이 찍은 가장 높은 상승 단계와 가장 깊은 하락 단계. 예전 형식(숫자 하나)도 읽는다."""
+        v = self.day_levels.get(code, 0)
+        if isinstance(v, (int, float)):
+            return max(v, 0), min(v, 0)
+        return v[0], v[1]
 
     def _news_codes(self, q):
         held = list(self.st["players"]["ai"]["positions"])

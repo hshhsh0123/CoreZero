@@ -206,6 +206,37 @@ class DetectionTest(EngineCase):
         self.run_ticks(eng, 3)
         self.assertEqual(len([e for e in eng.feed if e["kind"] == "fast_move"]), first)
 
+    def test_day_step_fires_once_per_level_even_if_price_wobbles_across_it(self):
+        self.seed({"S1": (100_000, 100.0)})
+        eng = self.engine(FakeBrain())
+        steps = lambda: [e["text"] for e in eng.feed if e["kind"] == "day_step"]
+        self.run_ticks(eng, 20)
+        for price in (103.5, 102.0, 103.4, 102.5, 103.6):   # 단계(+3%) 경계에서 오르내림
+            self.market.prices["S1"] = price
+            self.run_ticks(eng, 1)
+        self.assertEqual(len(steps()), 1)
+        self.market.prices["S1"] = 106.5                     # 더 높은 단계는 새 소식
+        self.run_ticks(eng, 1)
+        for price in (96.5, 101.0, 96.8):                    # 반대쪽 단계도 처음 한 번만
+            self.market.prices["S1"] = price
+            self.run_ticks(eng, 1)
+        self.assertEqual(len(steps()), 3)
+        self.assertIn("상승 2단계", steps()[1])
+        self.assertIn("하락 1단계", steps()[2])
+        self.assertEqual(eng.day_levels["S1"], [2, -1])
+
+    def test_day_step_reads_old_single_number_levels_after_restart(self):
+        self.seed({"S1": (100_000, 100.0)})
+        eng = self.engine(FakeBrain())
+        self.run_ticks(eng, 20)
+        eng.day_levels = {"S1": 1}                           # 고치기 전 엔진이 저장한 모양
+        self.market.prices["S1"] = 103.5
+        self.run_ticks(eng, 1)
+        self.assertEqual([e for e in eng.feed if e["kind"] == "day_step"], [])
+        self.market.prices["S1"] = 106.5
+        self.run_ticks(eng, 1)
+        self.assertEqual(len([e for e in eng.feed if e["kind"] == "day_step"]), 1)
+
     def test_quiet_market_makes_no_ai_calls_until_next_check(self):
         self.seed({"S1": (100_000, 100.0)})
         brain_ = FakeBrain()
