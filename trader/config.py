@@ -93,6 +93,7 @@ LIVE = {
     "day_step_min": 0.03,        # '오늘 이만큼 움직였다' 알림 단계 최소 폭 (종목)
     "index_day_step": 0.01,      # 같은 알림 단계 (벤치마크)
     "review_cooldown_min": 5,    # AI가 매매를 판단하는 사이의 최소 간격
+    "review_pacing": 0.8,        # 급하지 않은 가격 사건은 (남은 장 시간 / 남은 점검 횟수) x 이만큼 모아서 본다
     "stock_cooldown_min": 15,    # 같은 종목·같은 종류 알림을 다시 보내기까지 최소 간격
     "heartbeat_min": 90,         # AI가 다음 점검 시간을 안 정했을 때 기본 간격
     "open_review": True,         # 장이 열리고 시가 체결이 끝나면 AI가 오늘 계획을 한 번 점검

@@ -1130,6 +1130,38 @@ class NewsBudgetTest(EngineCase):
         self.assertTrue(any(e["kind"] == "triage" for e in eng.feed))
 
 
+class PacingTest(EngineCase):
+    def test_routine_price_events_wait_when_the_budget_is_thin(self):
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop": 80.0}})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 20)
+        eng.counts["reviews"] = 15                                    # 남은 점검 5번, 장은 5시간 넘게 남음
+        self.market.prices["S1"] = 96.0                               # 급변·오늘 등락 (급하지 않은 사건)
+        self.run_ticks(eng, 1)
+        self.assertEqual(len(brain_.react_calls), 1)                  # 처음 한 번은 바로
+        self.market.prices["S1"] = 92.0
+        self.run_ticks(eng, 20)
+        self.assertEqual(len(brain_.react_calls), 1)                  # 그다음은 모았다가 나중에
+        self.run_ticks(eng, 40)
+        self.assertEqual(len(brain_.react_calls), 2)
+        self.assertGreaterEqual(len(brain_.react_calls[1][1]), 2)    # 쌓인 사건을 한 번에 본다
+
+    def test_urgent_events_skip_the_pacing(self):
+        alerts = [{"code": "S1", "below": 93.0, "above": None, "note": "더 빠지면 줄이기"}]
+        self.seed({"S1": (100_000, 100.0)}, plans={"S1": {"stop": 80.0}}, alerts=alerts)
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 20)
+        eng.counts["reviews"] = 15
+        self.market.prices["S1"] = 96.0
+        self.run_ticks(eng, 1)
+        self.market.prices["S1"] = 92.5                               # AI가 걸어둔 알림이 울린다
+        self.run_ticks(eng, 6)
+        self.assertEqual(len(brain_.react_calls), 2)
+        self.assertIn("alert", self.kinds(brain_.react_calls[1]))
+
+
 class NewsPromptTest(EngineCase):
     def ctx(self):
         self.seed({"S1": (100_000, 100.0)}, alerts=[{"code": "S1", "below": 99.0, "above": None, "note": ""}])

@@ -47,6 +47,8 @@ RUNTIME = league.ROOT / "runtime"
 DEFAULT_SIGMA = 0.025  # 일봉이 모자란 종목에 쓰는 하루 변동성 (2.5%)
 MIN_SIGMA = 0.008
 MARKET_FEED_NAMES = {"MAIN": "시장 주요뉴스", ".IXIC": "나스닥 종합 뉴스"}
+# 기다리지 않고 바로 AI를 부르는 사건: 체결이 났거나, AI가 직접 불러 달라고 해 둔 것
+URGENT = {"stop", "trail", "take", "alert", "news_followup", "retry", "open", "heartbeat"}
 
 
 def _hm(s):
@@ -827,7 +829,7 @@ class LiveEngine:
         # 가격·계획에서 생긴 사건이 먼저다. 기사만 있으면 '뉴스 점검'(매매 없음)으로 따로 본다.
         priced = [e for e in self.events if e["kind"] != "news"]
         if priced:
-            if self.last_react_at and (now - self.last_react_at) < timedelta(minutes=LIVE["review_cooldown_min"]):
+            if self.last_react_at and (now - self.last_react_at) < timedelta(minutes=self._review_gap(priced, local)):
                 return
             mode = "trade"
             codes = {e.get("code") for e in priced if e.get("code")}
@@ -862,6 +864,15 @@ class LiveEngine:
             self._work(job)
         else:
             threading.Thread(target=self._work, args=(job,), daemon=True).start()
+
+    def _review_gap(self, priced, local):
+        """다음 AI 점검까지 기다릴 분. 손절·알림처럼 급한 일은 5분, 나머지 가격 사건은 남은 점검 횟수를
+        남은 장 시간에 고르게 나눈 만큼 모았다가 한 번에 보여준다 (아침에 점검을 다 써버리지 않게)."""
+        base = LIVE["review_cooldown_min"]
+        if any(e["kind"] in URGENT or e.get("code") in self.followups for e in priced):
+            return base   # 다시 보기를 기다리던 종목이 움직였으면 주가가 뉴스를 확인해 준 셈이라 바로 본다
+        left = max(1, LIVE["max_reviews_per_day"] - self.counts["reviews"])
+        return max(base, LIVE["review_pacing"] * self._minutes_left(local) / left)
 
     def _work(self, job):
         events, ctx, mode = job["events"], job["ctx"], job.get("mode", "trade")
