@@ -1297,6 +1297,16 @@ class NewsPromptTest(EngineCase):
         self.assertNotIn("recheck", out)
         self.assertEqual([a["below"] for a in out["alerts"]], [99.5])          # 매매 점검에서는 간격 제한 없음
 
+    def test_empty_alert_list_keeps_alerts_and_clearing_is_explicit(self):
+        prompt, out = self.ask("trade", {"assessment": "기존 알림으로 대응", "actions": [], "alerts": []})
+        self.assertIsNone(out["alerts"])               # 빈 목록은 '새 알림 없음'이지 '다 지워'가 아니다
+        self.assertIn("clear_alerts", prompt)
+        for odd in ("없음", None, {}, [{}], [{"code": "S1", "below": 101}]):   # 마지막은 지금 가격(100) 위라 못 건다
+            self.assertIsNone(self.ask("trade", {"assessment": "a", "actions": [], "alerts": odd})[1]["alerts"])
+        self.assertEqual(self.ask("trade", {"assessment": "a", "actions": [], "alerts": [], "clear_alerts": True})[1]["alerts"], [])
+        _, out = self.ask("trade", {"assessment": "a", "actions": [], "alerts": {"code": "S1", "below": 97}})
+        self.assertEqual([a["below"] for a in out["alerts"]], [97.0])          # 목록 괄호를 빼먹어도 알림 하나로 읽는다
+
 
 class PromptRulesTest(EngineCase):
     def fake_chat(self, answer):

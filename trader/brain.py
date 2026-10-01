@@ -613,7 +613,8 @@ def react(ctx, events, triage=None, mode="trade"):
         "자동으로 걸려. 물타기로 평단이 내려가도 손절가는 안 내려가.",
         "3) 알림 걸기: alerts에 가격을 적으면 그 가격 위로(above) 올라가거나 아래로(below) 내려가면 너를 다시 불러. "
         "note에 그때 하려는 일을 적어두면 같이 보여줄게. 예: 더 떨어지면 나눠서 더 살지 검토. "
-        f"알림은 한 번 울리면 사라지고 최대 {MAX_ALERTS}개야. alerts를 적으면 지금 걸린 알림 전체가 그 목록으로 바뀌고, 안 적으면 그대로야.",
+        f"알림은 한 번 울리면 사라지고 최대 {MAX_ALERTS}개야. alerts에 알림을 적으면 지금 걸린 알림 전체가 그 목록으로 바뀌어 "
+        "(남길 알림도 같이 적어). 지금 알림을 그대로 두려면 alerts를 빼거나 빈 목록으로 둬. 다 지우려면 \"clear_alerts\": true.",
         f"4) 다음 점검: next_check_min({lo}~{hi})에 아무 일이 없어도 다시 볼 시간을 분으로 적어. 불안하면 짧게, 조용하면 길게.",
     ]
     if news:
@@ -653,12 +654,15 @@ def react(ctx, events, triage=None, mode="trade"):
     result, meta = chat_json(MODEL_REACT, system_prompt_live(ctx), "\n".join(lines),
                              timeout=LIVE["ai_timeout_seconds"], retries=1)
     allowed = set(ctx["allowed"])
-    alerts, alert_notes = (None, [])
-    if "alerts" in result:
-        alerts, alert_notes = clean_alerts(
-            result.get("alerts"), allowed, ctx["ref_prices"],
-            min_gap=gap if news else 0.0, existing=ctx.get("alerts") or [],
-        )
+    raw_alerts = result.get("alerts")
+    alerts, alert_notes = clean_alerts(
+        [raw_alerts] if isinstance(raw_alerts, dict) else raw_alerts, allowed, ctx["ref_prices"],
+        min_gap=gap if news else 0.0, existing=ctx.get("alerts") or [],
+    )
+    if not alerts:
+        # 빈 목록(하나도 못 건 목록 포함)은 '새로 걸 알림 없음'으로 자주 쓰여서 지금 알림을 그대로 둔다(None).
+        # 다 지우는 건 따로 말해야 한다
+        alerts = [] if result.get("clear_alerts") is True else None
     nc = planlib._num(result.get("next_check_min"))
     actions, action_notes = clean_actions(result.get("actions") or [], allowed)
     out = {
