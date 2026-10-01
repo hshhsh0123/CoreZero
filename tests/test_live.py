@@ -1100,6 +1100,36 @@ class NewsSafetyTest(EngineCase):
         self.assertEqual(len([e for e in eng.feed if "다 써서" in e["text"]]), 1)
 
 
+class NewsBudgetTest(EngineCase):
+    def test_news_reviews_have_their_own_cap(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain()
+        eng = self.engine(brain_)
+        self.run_ticks(eng, 1)
+        for i in range(LIVE["max_news_reviews_per_day"] + 2):
+            self.news_items.append({"code": "S1", "key": f"k{i}", "when": self.market.now - timedelta(minutes=1),
+                                    "title": f"A사 수주 {i}", "source": "x"})
+            eng.last_news_at = None
+            self.run_ticks(eng, 2)
+        self.assertEqual(brain_.modes.count("news"), LIVE["max_news_reviews_per_day"])
+        self.assertEqual(eng.counts["news_reviews"], LIVE["max_news_reviews_per_day"])
+        self.assertEqual(len([e for e in eng.feed if "뉴스 점검" in e["text"] and "다 써서" in e["text"]]), 1)
+        self.market.prices["S1"] = 95.0                              # 가격 사건은 여전히 AI를 부른다
+        self.run_ticks(eng, 20)
+        self.assertIn("trade", brain_.modes)
+
+    def test_low_importance_news_is_not_escalated(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain()
+        brain_.triage = lambda ctx, events: {"verdict": "review", "importance": 3, "reason": "애매", "meta": {}}
+        eng = self.engine(brain_)
+        self.news_items = [{"code": "S1", "key": "p1", "when": self.market.now - timedelta(minutes=1),
+                            "title": "A사 80주년 프로모션", "source": "x"}]
+        self.run_ticks(eng, 3)
+        self.assertEqual(brain_.react_calls, [])
+        self.assertTrue(any(e["kind"] == "triage" for e in eng.feed))
+
+
 class NewsPromptTest(EngineCase):
     def ctx(self):
         self.seed({"S1": (100_000, 100.0)}, alerts=[{"code": "S1", "below": 99.0, "above": None, "note": ""}])

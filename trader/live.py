@@ -116,9 +116,12 @@ class LiveEngine:
 
     def _load_counts(self, today):
         snap = self._read_json(self._file("live")) or {}
+        # 뉴스 점검 횟수를 안 남기던 때의 기록이면 오늘 판단 기록에서 센다
+        news = sum(1 for r in self.st.get("reactions") or [] if r.get("date") == today and r.get("mode") == "news")
+        base = {"reviews": 0, "triages": 0, "trades": 0, "news_reviews": news}
         if today and snap.get("date") == today and isinstance(snap.get("counts"), dict):
-            return {"reviews": 0, "triages": 0, "trades": 0, **snap["counts"]}
-        return {"reviews": 0, "triages": 0, "trades": 0}
+            return {**base, **snap["counts"]}
+        return {"reviews": 0, "triages": 0, "trades": 0, "news_reviews": 0}
 
     def _feed(self, kind, text, now=None, **extra):
         now = now or datetime.now(timezone.utc)
@@ -161,6 +164,7 @@ class LiveEngine:
         self.news_log = {}       # code -> {기사키: (시각, 매체, 제목)} 매체 수 세기용
         self.followups = {}      # code -> 뉴스 뒤 주가 반응을 다시 볼 예약
         self.budget_noted = False
+        self.news_budget_noted = False
         self.opened_at = None
         self.holiday = False
         self.closed_ticks = 0
@@ -838,6 +842,14 @@ class LiveEngine:
             if self.counts["triages"] >= LIVE["max_triages_per_day"]:
                 self.events.clear()
                 return
+            if self.counts.get("news_reviews", 0) >= LIVE["max_news_reviews_per_day"]:
+                # 뉴스 점검 몫을 다 썼다. 남은 점검은 가격이 움직였을 때 쓴다
+                self.events.clear()
+                if not self.news_budget_noted:
+                    self.news_budget_noted = True
+                    self._feed("info", f"오늘 뉴스 점검 {LIVE['max_news_reviews_per_day']}번을 다 써서 기사만으로는 더 안 불러요. "
+                                       "주가가 움직이면 그때 같이 봐요", now)
+                return
             mode = "news"
             batch, self.events = self.events[:10], self.events[10:]
             self.counts["triages"] += 1
@@ -861,7 +873,7 @@ class LiveEngine:
             if mode == "news":
                 triage = self.ai.triage(ctx, events)
                 out["triage"] = {k: triage.get(k) for k in ("verdict", "importance", "reason")}
-                if triage["verdict"] != "review":
+                if triage["verdict"] != "review" or (triage.get("importance") or 0) < LIVE["triage_min_importance"]:
                     out["ignored"] = True
                     return
             out = {**self.ai.react(ctx, events, triage=triage, mode=mode), **out}  # 모드 같은 엔진 값이 이긴다
@@ -967,6 +979,8 @@ class LiveEngine:
                 self._feed("triage", f"새 소식을 훑어봤는데 매매할 일은 아니래요: {tri.get('reason', '')}", now, triage=tri)
             else:
                 self.counts["reviews"] += 1
+                if res.get("mode") == "news":
+                    self.counts["news_reviews"] = self.counts.get("news_reviews", 0) + 1
                 self.last_react_at = now
                 minutes = res.get("next_check_min") or LIVE["heartbeat_min"]
                 self.next_check_at = now + timedelta(minutes=minutes)

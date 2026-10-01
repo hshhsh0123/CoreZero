@@ -99,6 +99,8 @@ LIVE = {
     "job_gap_seconds": 60,       # AI 호출 사이의 최소 간격 (실패해도 폭주 방지)
     "ai_timeout_seconds": 150,   # 장중 AI 호출 한 번의 최대 대기 시간
     "max_reviews_per_day": 20,
+    "max_news_reviews_per_day": 6,   # 그중 기사만으로 하는 뉴스 점검은 이만큼까지 (가격 사건 몫을 남긴다)
+    "triage_min_importance": 4,      # 빠른 심사가 매긴 중요도(1~5)가 이보다 낮으면 큰 모델을 안 부른다
     "max_triages_per_day": 80,
     "max_live_trades_per_day": 30,
     "stop_confirm_ticks": 2,     # 손절·목표가를 이 횟수 연속 넘겨야 집행 (튀는 시세 방지)
