@@ -838,7 +838,9 @@ class LiveEngine:
         # 가격·계획에서 생긴 사건이 먼저다. 급하지 않은 가격 사건이 모이는 동안이나 기사만 있을 때는
         # 기사를 따로 '뉴스 점검'(매매 없음)으로 본다.
         priced = [e for e in self.events if e["kind"] != "news"]
-        ready = bool(priced) and not (
+        # 장 시작 직후 소란한 몇 분 동안 생긴 가격 사건은 모아 뒀다가 장 시작 점검 때 같이 본다 (손절은 그대로 돈다)
+        settling = self.session_start and now < self.session_start + timedelta(minutes=LIVE["open_quiet_min"])
+        ready = bool(priced) and not settling and not (
             self.last_react_at and (now - self.last_react_at) < timedelta(minutes=self._review_gap(priced, local)))
         if ready:
             mode = "trade"
@@ -846,7 +848,8 @@ class LiveEngine:
             # 확인을 기다리던 뉴스가 있는 종목이 먼저 움직였으면 기다리지 않고 그 뉴스도 같이 보여준다
             for code in [c for c in self.followups if c in codes]:
                 self._fire_followup(code, q, now, local)
-            priced = [e for e in self.events if e["kind"] != "news"]
+            # 많이 모였으면 급한 사건(장 시작 점검·손절·알림)부터 담는다
+            priced = sorted((e for e in self.events if e["kind"] != "news"), key=lambda e: e["kind"] not in URGENT)
             related = [e for e in self.events if e["kind"] == "news" and e.get("code") in codes]
             batch = (priced + related)[:12]  # 같은 종목 기사는 주가가 확인해준 뉴스로 같이 보여준다
             self.events = [e for e in self.events if not any(e is b for b in batch)]

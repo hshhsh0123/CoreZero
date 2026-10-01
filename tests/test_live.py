@@ -924,6 +924,23 @@ class SessionFlowTest(EngineCase):
         self.assertEqual(brain_.react_calls[0][1][0]["kind"], "open")
         self.assertIn("S2", eng.st["players"]["ai"]["positions"])     # 조용한 시간 뒤라 살 수 있다
 
+    def test_moves_in_the_quiet_minutes_wait_for_the_open_review(self):
+        self.seed({"S1": (100_000, 100.0)})
+        brain_ = FakeBrain()
+        with mock.patch.dict(LIVE, {"open_review": True}):
+            eng = self.engine(brain_)
+            self.market.now = kst(9, 0)
+            self.run_ticks(eng, 3)
+            self.market.prices["S1"] = 96.0                           # 장 시작 3분 만에 -4%
+            self.run_ticks(eng, 8)
+            self.assertEqual(brain_.react_calls, [])                  # 시끄러운 시간이라 모아만 둔다
+            self.run_ticks(eng, 6)                                    # 09:15가 지나면 한 번에 본다
+        self.assertEqual(len(brain_.react_calls), 1)
+        kinds = self.kinds(brain_.react_calls[0])
+        self.assertEqual(kinds[0], "open")                            # 급한 사건이 앞에 온다
+        self.assertIn("fast_move", kinds)
+        self.assertIn("day_step", kinds)
+
     def test_late_close_keeps_watching_until_the_index_closes(self):
         self.seed({"S1": (100_000, 100.0)})
         calls = []
